@@ -517,7 +517,19 @@ if coleta_mode == "Hoje + dias personalizados":
 default_from = min_date if isinstance(min_date, date) else date.today()
 default_to = max_date if isinstance(max_date, date) else date.today()
 
-date_range = st.sidebar.date_input("Período", value=(default_from, default_to), min_value=default_from, max_value=default_to)
+# permite escolher datas além do CSV atual (ex.: até +60 dias)
+picker_max = max(
+    default_to,
+    date.today() + timedelta(days=60)  # ajuste se quiser
+)
+
+date_range = st.sidebar.date_input(
+    "Período",
+    value=(default_from, default_to),
+    min_value=default_from,   # pode deixar como está
+    max_value=picker_max      # <<< novo teto do seletor
+)
+
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     f_date_from, f_date_to = date_range
 else:
@@ -679,6 +691,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
