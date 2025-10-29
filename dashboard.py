@@ -35,7 +35,7 @@ BASE_URL = "https://evo-integracao.w12app.com.br/api/v1"
 VERIFY_SSL = True
 
 # Defaults de período quando o usuário clicar em Atualizar (se não escolher outro)
-DAYS_AHEAD_DEFAULT = 15
+DAYS_AHEAD_DEFAULT = 21
 
 # Senha para liberar o botão (opcional)
 DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
@@ -658,4 +658,5 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
