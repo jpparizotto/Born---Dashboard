@@ -500,6 +500,20 @@ else:
     min_date = date.today()
     max_date = date.today() + timedelta(days=DAYS_AHEAD_DEFAULT)
 
+st.sidebar.header("Coleta (Atualizar)")
+coleta_mode = st.sidebar.radio(
+    "Período da coleta",
+    ["Usar filtros atuais", f"Hoje + {DAYS_AHEAD_DEFAULT} dias", "Hoje + dias personalizados"],
+    index=0
+)
+dias_custom = None
+if coleta_mode == "Hoje + dias personalizados":
+    dias_custom = st.sidebar.number_input(
+        "Quantidade de dias", 
+        min_value=1, max_value=60, 
+        value=DAYS_AHEAD_DEFAULT, step=1
+    )
+
 default_from = min_date if isinstance(min_date, date) else date.today()
 default_to = max_date if isinstance(max_date, date) else date.today()
 
@@ -537,17 +551,24 @@ with col_up_a:
     btn = st.button("🔄 Atualizar agora", type="primary", disabled=not pwd_ok)
 
     if btn:
-        try:
-            with st.spinner("Coletando dados do EVO e gerando CSV..."):
-                # usa as datas do filtro como alvo
-                path = gerar_csv(f_date_from.isoformat(), f_date_to.isoformat())
-            st.success(f"Atualizado com sucesso!\nArquivo: {os.path.basename(path)}")
-            # força recarregar a página com os dados recém-gerados
-            st.rerun()
-        except Exception as e:
-            st.error("Falha ao atualizar os dados.")
-            with st.expander("Detalhes"):
-                st.code(str(e))
+    try:
+        with st.spinner("Coletando dados do EVO e gerando CSV..."):
+            if coleta_mode == "Usar filtros atuais":
+                start = f_date_from
+                end = f_date_to
+            elif coleta_mode.startswith("Hoje +"):
+                today = date.today()
+                n = DAYS_AHEAD_DEFAULT if dias_custom is None else dias_custom
+                start = today
+                end = today + timedelta(days=int(n))
+
+            path = gerar_csv(start.isoformat(), end.isoformat())
+        st.success(f"Atualizado com sucesso!\nArquivo: {os.path.basename(path)}")
+        st.rerun()
+    except Exception as e:
+        st.error("Falha ao atualizar os dados.")
+        with st.expander("Detalhes"):
+            st.code(str(e))
 
 with col_up_b:
     st.caption("O botão gera um novo CSV no servidor (pasta `evo_ocupacao/`) e recarrega o painel.")
@@ -658,5 +679,6 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
