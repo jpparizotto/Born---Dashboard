@@ -666,15 +666,27 @@ fig1b = px.bar(
     y="Bookados",
     title="Clientes bookados por dia",
     labels={"Bookados": "Clientes", "Data": "Data"},
+    text="Bookados",  # ➜ mostra o valor no topo da barra
 )
 
-# Hover com dia da semana
+# Configura estilo do texto e hover
 fig1b.update_traces(
+    texttemplate="%{text:d}", 
+    textposition="outside",     # coloca acima da barra
     hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Clientes: %{y:d}<extra></extra>",
     customdata=np.stack([grp_day["DiaSemana"]], axis=-1)
 )
 
+# Ajusta layout para dar espaço pro texto acima
+fig1b.update_layout(
+    uniformtext_minsize=8,
+    uniformtext_mode="hide",
+    yaxis_title="Clientes (bookados)",
+    margin=dict(t=60, b=40),
+)
+
 st.plotly_chart(fig1b, use_container_width=True)
+
 
 # Gráfico — Ocupação por modalidade
 grp_mod = df.groupby("Atividade", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
@@ -741,6 +753,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
