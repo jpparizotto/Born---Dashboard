@@ -427,7 +427,7 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
         z[wi][wd] = float(z_val)
 
         if show_values_in_cell:
-            text[wi][wd] = f"{int(r['day_num'])}\nS:{slots} V:{vagas}\nOcc:{occ:.0f}% Sob:{sobr}"
+            text[wi][wd] = f"{int(r['day_num'])}\nB:{book} V:{vagas}\nOcc:{occ:.0f}% Sob:{sobr}"
         else:
             text[wi][wd] = str(int(r["day_num"]))
 
@@ -753,6 +753,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
