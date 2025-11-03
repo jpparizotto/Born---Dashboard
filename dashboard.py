@@ -626,10 +626,38 @@ with kpi4: _kpi_block("Vagas livres", f"{total_free}")
 st.divider()
 
 # Gráfico — Ocupação por dia
-grp_day = df.groupby("Data", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
-grp_day["Ocupacao%"] = (grp_day["Bookados"] / grp_day["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
-fig1 = px.bar(grp_day.sort_values("Data"), x="Data", y="Ocupacao%", title="Ocupação por Dia", labels={"Ocupacao%": "Ocupação (%)", "Data": "Data"})
-st.plotly_chart(fig1, width="stretch")
+grp_day = df.groupby("Data", as_index=False).agg(
+    Vagas=("Capacidade", "sum"),
+    Bookados=("Bookados", "sum"),
+    Slots=("Horario", "count")
+)
+grp_day["Ocupacao%"] = (
+    grp_day["Bookados"] / grp_day["Vagas"] * 100
+).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
+
+# ➜ NOVO: adicionar coluna com nome do dia da semana (em português)
+dias_semana = {
+    0: "Segunda-feira", 1: "Terça-feira", 2: "Quarta-feira",
+    3: "Quinta-feira", 4: "Sexta-feira", 5: "Sábado", 6: "Domingo"
+}
+grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(dias_semana)
+
+# Criar gráfico com hover personalizado
+fig1 = px.bar(
+    grp_day.sort_values("Data"),
+    x="Data",
+    y="Ocupacao%",
+    title="Ocupação por Dia",
+    labels={"Ocupacao%": "Ocupação (%)", "Data": "Data"}
+)
+
+# ➜ Personalizar hover para incluir o dia da semana
+fig1.update_traces(
+    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Ocupação: %{y:.1f}%<extra></extra>",
+    customdata=np.stack([grp_day["DiaSemana"]], axis=-1)
+)
+
+st.plotly_chart(fig1, use_container_width=True)
 
 # Gráfico — Ocupação por modalidade
 grp_mod = df.groupby("Atividade", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
@@ -696,6 +724,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
