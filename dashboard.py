@@ -451,13 +451,14 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
         text=text, texttemplate="%{text}", textfont={"size": font_size},
         customdata=custom,
         hovertemplate=(
-            "<b>%{customdata.data|%Y-%m-%d}</b><br>"
-            "Slots: %{customdata.slots}<br>"
-            "Vagas: %{customdata.vagas}<br>"
+            "<b>%{customdata.data|%d/%m/%Y}</b><br>"
+            "Bookados: %{customdata.book}<br>"
+            "Vagas totais: %{customdata.vagas}<br>"
             "Ocupação: %{customdata.occ:.1f}%<br>"
             "Vagas sobrando: %{customdata.sobr}<extra></extra>"
         ),
     ))
+
 
     fig.update_xaxes(tickmode="array", tickvals=list(range(7)), ticktext=x_labels, side="top", showgrid=False)
     fig.update_yaxes(tickmode="array", tickvals=list(range(n_weeks)), ticktext=[f"Semana {i+1}" for i in range(n_weeks)], autorange="reversed", showgrid=False)
@@ -753,6 +754,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
