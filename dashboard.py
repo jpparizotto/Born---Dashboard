@@ -607,16 +607,21 @@ if df.empty:
     st.stop()
 
 # KPIs
-total_slots = int(len(df))
 total_capacity = int(df["Capacidade"].sum())
 total_booked = int(df["Bookados"].sum())
+total_free = int(df["Disponíveis"].sum())  # vagas livres agregadas
+# fallback defensivo caso "Disponíveis" venha inconsistente:
+if pd.isna(total_free) or total_free < 0:
+    total_free = int((df["Capacidade"] - df["Bookados"]).clip(lower=0).sum())
+
 occ_overall = (total_booked / total_capacity * 100) if total_capacity else 0.0
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 with kpi1: _kpi_block("Ocupação média", f"{occ_overall:.1f}%")
 with kpi2: _kpi_block("Vagas (capacidade)", f"{total_capacity}")
 with kpi3: _kpi_block("Bookados", f"{total_booked}")
-with kpi4: _kpi_block("Slots", f"{total_slots}")
+with kpi4: _kpi_block("Vagas livres", f"{total_free}")
+
 
 st.divider()
 
@@ -691,6 +696,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
