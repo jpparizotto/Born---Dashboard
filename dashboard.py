@@ -1020,14 +1020,19 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 with col_c:
-    # botão Excel via pandas (sem openpyxl)
     selected_cols = [
         "Pista", "Data", "Início", "Fim", "Atividade",
         "Capacidade", "Bookados", "Disponíveis",
-        "Professor", "Aluno 1", "Aluno 2", "Aluno 3"
+        "Professor", "Aluno 1", "Aluno 2", "Aluno 3",
     ]
-    cols_existentes = [c for c in selected_cols if c in df.columns]
-    df_excel = df[cols_existentes].sort_values(["Data", "Horario", "Atividade"])
+
+    # 1) Ordena primeiro no df original (usando só chaves que existirem)
+    sort_keys = [c for c in ["Data", "Horario", "Atividade"] if c in df.columns]
+    df_sorted = df.sort_values(sort_keys) if sort_keys else df.copy()
+
+    # 2) Depois seleciona as colunas desejadas (apenas as que existirem)
+    cols_existentes = [c for c in selected_cols if c in df_sorted.columns]
+    df_excel = df_sorted[cols_existentes]
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -1047,6 +1052,7 @@ with col_c:
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
