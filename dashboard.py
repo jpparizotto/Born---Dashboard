@@ -165,7 +165,17 @@ def _ensure_base_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["Professor", "Aluno 1", "Aluno 2", "Aluno 3"]:
         if col not in df.columns:
             df[col] = None
-
+    # Normalizar/garantir coluna Pista
+    rename_map = rename_map if 'rename_map' in locals() else {}
+    # (se quiser mapear variantes)
+    for cand in (["Pista", "Track", "Lane", "Belt", "Treadmill", "Machine", "Device"]):
+        if cand in df.columns:
+            df = df.rename(columns={cand: "Pista"})
+            break
+    
+    if "Pista" not in df.columns:
+        df["Pista"] = None
+        
     return df
 
 def _load_data() -> pd.DataFrame:
@@ -374,6 +384,64 @@ def _extract_professor(item):
             return str(lst[0]).strip()
     return None
 
+def _extract_pista(container) -> str | None:
+    """Tenta descobrir a pista (A/B) a partir do detail."""
+    if not isinstance(container, dict):
+        return None
+
+    # chaves candidatas (conforme costuma vir no detail)
+    keys = [
+        "pista", "track", "trackName", "lane", "belt",
+        "treadmill", "machine", "device", "deviceName",
+    ]
+
+    # leitura direta
+    for k in keys:
+        v = container.get(k)
+        if v not in (None, "", []):
+            raw = str(v).strip()
+            break
+    else:
+        # alguns enviam aninhado tipo detail["location"]["track"]
+        loc = container.get("location")
+        if isinstance(loc, dict):
+            for k in keys:
+                v = loc.get(k)
+                if v not in (None, "", []):
+                    raw = str(v).strip()
+                    break
+            else:
+                return None
+        else:
+            return None
+
+    s = raw.lower()
+
+    # normalizações comuns
+    map_exact = {
+        "a": "A", "pista a": "A", "track a": "A", "lane a": "A",
+        "b": "B", "pista b": "B", "track b": "B", "lane b": "B",
+        "1": "A", "pista 1": "A", "track 1": "A", "lane 1": "A", "machine 1": "A", "esteira 1": "A",
+        "2": "B", "pista 2": "B", "track 2": "B", "lane 2": "B", "machine 2": "B", "esteira 2": "B",
+    }
+    if s in map_exact:
+        return map_exact[s]
+
+    # tenta extrair a 1ª letra (A/B) se vier tipo "Pista A - 18h"
+    if any(ch.isalpha() for ch in s):
+        first_alpha = next((ch for ch in s if ch.isalpha()), None)
+        if first_alpha in ("a", "b"):
+            return first_alpha.upper()
+
+    # tenta extrair número e mapear 1→A, 2→B
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if digits == "1":
+        return "A"
+    if digits == "2":
+        return "B"
+
+    return None
+
 def _materialize_rows(atividades, agenda_items):
     rows = []
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
@@ -409,17 +477,15 @@ def _materialize_rows(atividades, agenda_items):
             _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
         )
         
-        # tenta extrair professor diretamente do item
+        # professor (como já está hoje)
         prof_name = _extract_professor(h)
-        
-        # ids necessários para o /detail
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
         
-        # busca detail (vamos precisar de qualquer forma para alunos)
+        # sempre buscamos o detail porque também precisamos da Pista
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
         
-        # professor (caso não tenha vindo no item)
+        # completa professor se faltar (como você já implementou)
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
             if not prof_name and isinstance(detail.get("instructor"), dict):
@@ -433,44 +499,19 @@ def _materialize_rows(atividades, agenda_items):
                         break
         prof_name = (prof_name or "(Sem professor)")
         
+        # ➜ NOVO: extrai Pista (A/B) do detail
+        pista = _extract_pista(detail) or "(Sem pista)"
+        
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
         hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
         
-        schedule_id = _first(
-            h,
-            "idAtividadeSessao", "idConfiguration", "idGroupActivity",
-            "idActivitySchedule", "scheduleId", "idSchedule",
-            "idActivityScheduleClass", "idClassSchedule", "idScheduleClass",
-            "idActivityScheduleTime", "activityScheduleId",
-            "idClass", "idTime", "id", "Id"
-        )
-        
-        capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
-        filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
-        available = _safe_int(_first(h, "available", "vacancies"))
-        if available is None and capacity is not None and filled is not None:
-            available = max(0, capacity - filled)
-        
-        # ➜ NOVO: alunos (a partir do detail)
-        alunos = _extract_alunos(detail)
-        
-        # montar as 3 colunas conforme regra:
-        # - preencher com nomes encontrados
-        # - se faltar nome, completar com "vazio"
-        # - se a aula tiver apenas 2 vagas (capacity == 2), Aluno 3 = "N.A"
-        aluno_cols = ["vazio", "vazio", "vazio"]
-        for i in range(min(3, len(alunos))):
-            aluno_cols[i] = alunos[i]
-        
-        if capacity is not None and capacity < 3:
-            # pedido: se a aula tiver apenas 2 vagas, colocar a terceira como "N.A"
-            # (vamos aplicar para qualquer capacidade < 3, para refletir indisponibilidade da 3ª vaga)
-            aluno_cols[2] = "N.A"
+        # (…capacity/available/bookados como já estão…)
         
         if date_val:
             rows.append({
                 "Data": date_val,
                 "Atividade": act_name_final,
+                "Pista": pista,                     # <<< NOVA COLUNA (antes de "Início")
                 "Início": hour_start,
                 "Fim": hour_end,
                 "Horario": hour_start if hour_start else None,
@@ -480,7 +521,7 @@ def _materialize_rows(atividades, agenda_items):
                 "ScheduleId": schedule_id,
                 "ActivityId": act_id_final,
                 "Professor": prof_name,
-                "Aluno 1": aluno_cols[0],   # <<< NOVOS CAMPOS
+                "Aluno 1": aluno_cols[0],
                 "Aluno 2": aluno_cols[1],
                 "Aluno 3": aluno_cols[2],
             })
@@ -936,6 +977,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
