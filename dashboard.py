@@ -556,6 +556,16 @@ def _materialize_rows(atividades, agenda_items):
 
 
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
+    # Após ordenar por (Data, Horario, Atividade), alternar Pista A/B quando vier "(Sem pista)"
+    alt_idx_by_date = {}
+    for r in rows:
+        # chave de dia
+        d = r["Data"]
+        # só aplica fallback se estiver sem pista
+        if r.get("Pista") in (None, "", "(Sem pista)"):
+            i = alt_idx_by_date.get(d, 0)
+            r["Pista"] = "A" if (i % 2 == 0) else "B"
+            alt_idx_by_date[d] = i + 1
     return rows
 
 def gerar_csv(date_from: str | None = None, date_to: str | None = None) -> str:
@@ -1006,6 +1016,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
