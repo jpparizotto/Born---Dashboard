@@ -2,4 +2,6 @@ streamlit
 plotly
 pandas
 python-dateutil
+xlsxwriter
 numpy
+openpyxl
