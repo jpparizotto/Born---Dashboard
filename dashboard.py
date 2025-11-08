@@ -281,7 +281,31 @@ def _safe_int(x):
         return int(x)
     except Exception:
         return None
-        
+
+_DETAIL_CACHE = {}
+
+def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, id_activity_session: int | None = None):
+    if not config_id and not id_activity_session:
+        return {}
+    key = (config_id or 0, activity_date_iso or "", id_activity_session or 0)
+    if key in _DETAIL_CACHE:
+        return _DETAIL_CACHE[key]
+    params = {}
+    if config_id and activity_date_iso:
+        params["idConfiguration"] = int(config_id)
+        params["activityDate"] = activity_date_iso  # "YYYY-MM-DD"
+    if id_activity_session:
+        params["idActivitySession"] = int(id_activity_session)
+    try:
+        detail = _get_json(f"{BASE_URL}/activities/schedule/detail", params=params) or {}
+        # algumas instalações envelopam em {"data": {...}}
+        if isinstance(detail, dict) and "data" in detail and isinstance(detail["data"], dict):
+            detail = detail["data"]
+        _DETAIL_CACHE[key] = detail
+        return detail
+    except Exception:
+        return {}
+
 def _extract_professor(item):
     # tenta chaves diretas
     for k in ["teacher", "teacherName", "instructor", "instructorName",
@@ -316,7 +340,22 @@ def _materialize_rows(atividades, agenda_items):
             act_name_final = "(Sem atividade)"
             act_id_final = _first(h, "idActivity", "activityId", "id", "Id")
 
-        prof_name = _extract_professor(h) or "(Sem professor)"
+        # tenta extrair diretamente do item
+        prof_name = _extract_professor(h)
+        
+        # ids necessários para o /detail
+        config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
+        id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
+        
+        # se não achou professor no item, tenta no detalhe
+        if not prof_name:
+            # date_val já é calculado logo abaixo; precisamos dele aqui
+            # por isso mova o cálculo de date_val para cima deste bloco ou recalcule rapidamente:
+            date_val_tmp = _first(h, "_requestedDate") or _normalize_date_only(_first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
+            detail = _get_schedule_detail(config_id, date_val_tmp, id_activity_session)
+            prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
+        
+        prof_name = (prof_name or "(Sem professor)")
 
         date_val = _first(h, "_requestedDate") or _normalize_date_only(_first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
 
@@ -812,6 +851,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
