@@ -1009,13 +1009,58 @@ st.divider()
 st.subheader("Dados filtrados (detalhado)")
 st.dataframe(df.sort_values(["Data", "Horario", "Atividade"]).reset_index(drop=True), use_container_width=True, height=420)
 
-col_a, col_b = st.columns(2)
+from io import BytesIO
+from openpyxl import Workbook
+
+col_a, col_b, col_c = st.columns(3)
+
 with col_a:
     _download_button_csv(df.sort_values(["Data", "Horario", "Atividade"]), "⬇️ Baixar dados filtrados (CSV)", "dados_filtrados.csv")
+
 with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
+with col_c:
+    # botão de Excel personalizado
+    selected_cols = [
+        "Pista", "Data", "Início", "Fim", "Atividade",
+        "Capacidade", "Bookados", "Disponíveis",
+        "Professor", "Aluno 1", "Aluno 2", "Aluno 3"
+    ]
+    cols_existentes = [c for c in selected_cols if c in df.columns]
+    df_excel = df[cols_existentes].sort_values(["Data", "Horario", "Atividade"])
+
+    # cria o Excel em memória
+    buffer = BytesIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Aulas"
+
+    # cabeçalhos
+    ws.append(cols_existentes)
+
+    # linhas
+    for _, row in df_excel.iterrows():
+        ws.append([row.get(col, "") for col in cols_existentes])
+
+    # autoajuste simples de largura
+    for col in ws.columns:
+        max_len = max((len(str(cell.value)) for cell in col), default=0)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+
+    wb.save(buffer)
+    buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ Baixar Excel (XLSX)",
+        data=buffer,
+        file_name="dados_filtrados.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
