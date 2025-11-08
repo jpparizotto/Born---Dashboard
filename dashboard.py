@@ -281,6 +281,26 @@ def _safe_int(x):
         return int(x)
     except Exception:
         return None
+        
+def _extract_professor(item):
+    # tenta chaves diretas
+    for k in ["teacher", "teacherName", "instructor", "instructorName",
+              "professional", "professionalName", "employee", "employeeName",
+              "coach", "coachName"]:
+        v = _first(item, k)
+        if v:
+            return str(v).strip()
+
+    # tenta listas de profissionais
+    for list_key in ["professionals", "teachers", "employees", "instructors"]:
+        lst = item.get(list_key)
+        if isinstance(lst, list) and lst:
+            for cand in lst:
+                for name_k in ["name", "fullName", "displayName", "description"]:
+                    if isinstance(cand, dict) and cand.get(name_k):
+                        return str(cand[name_k]).strip()
+            return str(lst[0]).strip()
+    return None
 
 def _materialize_rows(atividades, agenda_items):
     rows = []
@@ -295,6 +315,8 @@ def _materialize_rows(atividades, agenda_items):
         else:
             act_name_final = "(Sem atividade)"
             act_id_final = _first(h, "idActivity", "activityId", "id", "Id")
+
+        prof_name = _extract_professor(h) or "(Sem professor)"
 
         date_val = _first(h, "_requestedDate") or _normalize_date_only(_first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
 
@@ -327,7 +349,8 @@ def _materialize_rows(atividades, agenda_items):
                 "Disponíveis": (available or 0),
                 "Bookados": (filled or (capacity or 0) - (available or 0) if capacity is not None and available is not None else 0),
                 "ScheduleId": schedule_id,
-                "ActivityId": act_id_final
+                "ActivityId": act_id_final,
+                "Professor": prof_name,       
             })
 
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
@@ -703,6 +726,41 @@ grp_per = grp_per.sort_values(by="Periodo", key=lambda s: s.map(order_map))
 fig3 = px.bar(grp_per, x="Periodo", y="Ocupacao%", title="Ocupação por Período", labels={"Ocupacao%": "Ocupação (%)", "Periodo": "Período"})
 st.plotly_chart(fig3, width="stretch")
 
+# Gráfico — Aulas por professor (contagem de slots/aulas)
+df_prof = df.copy()
+df_prof["Professor"] = df_prof["Professor"].fillna("(Sem professor)")
+
+grp_prof = df_prof.groupby("Professor", as_index=False).agg(
+    Aulas=("Horario", "count"),
+    Bookados=("Bookados", "sum"),
+)
+
+# Ordena por quem mais deu aulas; opcional: limitar top-N pra visual ficar limpo
+grp_prof = grp_prof.sort_values("Aulas", ascending=False)
+
+fig_prof = px.bar(
+    grp_prof,
+    x="Professor",
+    y="Aulas",
+    title="Aulas por Professor (período selecionado)",
+    labels={"Aulas": "Aulas (contagem)", "Professor": "Professor"},
+    text="Aulas",
+)
+
+fig_prof.update_traces(
+    texttemplate="%{text:d}",
+    textposition="outside",
+    hovertemplate="<b>%{x}</b><br>Aulas: %{y:d}<br>Bookados (soma): %{customdata[0]:d}<extra></extra>",
+    customdata=np.stack([grp_prof["Bookados"]], axis=-1)
+)
+
+fig_prof.update_layout(
+    xaxis_tickangle=-25,
+    margin=dict(t=60, b=80),
+)
+
+st.plotly_chart(fig_prof, use_container_width=True)
+
 # Heatmap — Data × Horário
 grp_hh = df.groupby(["Data", "Horario"], as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"))
 grp_hh["Ocupacao%"] = (grp_hh["Bookados"] / grp_hh["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
@@ -754,6 +812,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
