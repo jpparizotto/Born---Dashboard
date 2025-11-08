@@ -163,8 +163,8 @@ def _ensure_base_columns(df: pd.DataFrame) -> pd.DataFrame:
         df["Professor"] = None
     
     for col in ["Professor", "Aluno 1", "Aluno 2", "Aluno 3"]:
-    if col not in df.columns:
-        df[col] = None
+        if col not in df.columns:
+            df[col] = None
 
     return df
 
@@ -936,6 +936,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
