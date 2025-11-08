@@ -161,6 +161,10 @@ def _ensure_base_columns(df: pd.DataFrame) -> pd.DataFrame:
     # Garantir coluna Professor mesmo em CSVs antigos
     if "Professor" not in df.columns:
         df["Professor"] = None
+    
+    for col in ["Professor", "Aluno 1", "Aluno 2", "Aluno 3"]:
+    if col not in df.columns:
+        df[col] = None
 
     return df
 
@@ -309,6 +313,47 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
     except Exception:
         return {}
 
+def _extract_alunos(container) -> list[str]:
+    """
+    Tenta extrair uma lista de nomes de alunos a partir de várias chaves possíveis,
+    tanto do item bruto quanto do /activities/schedule/detail.
+    """
+    if not isinstance(container, dict):
+        return []
+
+    # candidatos a listas de inscritos
+    list_keys = [
+        "students", "enrollments", "enrolled", "registrations",
+        "customers", "clients", "members", "participants", "persons", "users",
+        "alunos", "inscritos"
+    ]
+    name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
+
+    # 1) se vier diretamente como lista em alguma chave
+    for lk in list_keys:
+        lst = container.get(lk)
+        if isinstance(lst, list) and lst:
+            out = []
+            for item in lst:
+                if isinstance(item, dict):
+                    for nk in name_keys:
+                        if item.get(nk):
+                            out.append(str(item[nk]).strip())
+                            break
+                elif isinstance(item, str):
+                    out.append(item.strip())
+            return [n for n in out if n]
+
+    # 2) se vier em uma chave “enrollment” com subcampos
+    for k, v in container.items():
+        if isinstance(v, dict):
+            # procurar nomes em sub-dicts
+            for nk in name_keys:
+                if v.get(nk):
+                    return [str(v[nk]).strip()]
+
+    return []
+
 def _extract_professor(item):
     # tenta chaves diretas
     for k in ["teacher", "teacherName", "instructor", "instructorName",
@@ -360,11 +405,37 @@ def _materialize_rows(atividades, agenda_items):
         
         prof_name = (prof_name or "(Sem professor)")
 
-        date_val = _first(h, "_requestedDate") or _normalize_date_only(_first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
-
+        date_val = _first(h, "_requestedDate") or _normalize_date_only(
+            _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
+        )
+        
+        # tenta extrair professor diretamente do item
+        prof_name = _extract_professor(h)
+        
+        # ids necessários para o /detail
+        config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
+        id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
+        
+        # busca detail (vamos precisar de qualquer forma para alunos)
+        detail = _get_schedule_detail(config_id, date_val, id_activity_session)
+        
+        # professor (caso não tenha vindo no item)
+        if not prof_name:
+            prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
+            if not prof_name and isinstance(detail.get("instructor"), dict):
+                prof_name = _first(detail["instructor"], "name", "fullName", "displayName", "description")
+            if not prof_name:
+                for lk in ["teachers", "professionals", "employees", "instructors"]:
+                    lst = detail.get(lk)
+                    if isinstance(lst, list) and lst:
+                        cand = lst[0]
+                        prof_name = _first(cand, "name", "fullName", "displayName", "description") if isinstance(cand, dict) else str(cand)
+                        break
+        prof_name = (prof_name or "(Sem professor)")
+        
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
-        hour_end = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
-
+        hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
+        
         schedule_id = _first(
             h,
             "idAtividadeSessao", "idConfiguration", "idGroupActivity",
@@ -373,13 +444,29 @@ def _materialize_rows(atividades, agenda_items):
             "idActivityScheduleTime", "activityScheduleId",
             "idClass", "idTime", "id", "Id"
         )
-
-        capacity = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
-        filled   = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
+        
+        capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
+        filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
         available = _safe_int(_first(h, "available", "vacancies"))
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
-
+        
+        # ➜ NOVO: alunos (a partir do detail)
+        alunos = _extract_alunos(detail)
+        
+        # montar as 3 colunas conforme regra:
+        # - preencher com nomes encontrados
+        # - se faltar nome, completar com "vazio"
+        # - se a aula tiver apenas 2 vagas (capacity == 2), Aluno 3 = "N.A"
+        aluno_cols = ["vazio", "vazio", "vazio"]
+        for i in range(min(3, len(alunos))):
+            aluno_cols[i] = alunos[i]
+        
+        if capacity is not None and capacity < 3:
+            # pedido: se a aula tiver apenas 2 vagas, colocar a terceira como "N.A"
+            # (vamos aplicar para qualquer capacidade < 3, para refletir indisponibilidade da 3ª vaga)
+            aluno_cols[2] = "N.A"
+        
         if date_val:
             rows.append({
                 "Data": date_val,
@@ -392,7 +479,10 @@ def _materialize_rows(atividades, agenda_items):
                 "Bookados": (filled or (capacity or 0) - (available or 0) if capacity is not None and available is not None else 0),
                 "ScheduleId": schedule_id,
                 "ActivityId": act_id_final,
-                "Professor": prof_name,       
+                "Professor": prof_name,
+                "Aluno 1": aluno_cols[0],   # <<< NOVOS CAMPOS
+                "Aluno 2": aluno_cols[1],
+                "Aluno 3": aluno_cols[2],
             })
 
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
@@ -846,6 +936,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
