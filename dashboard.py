@@ -473,19 +473,22 @@ def _materialize_rows(atividades, agenda_items):
         
         prof_name = (prof_name or "(Sem professor)")
 
+        # calcula a data (usada também no /detail)
         date_val = _first(h, "_requestedDate") or _normalize_date_only(
             _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
         )
         
-        # professor (como já está hoje)
+        # tenta extrair professor direto do item
         prof_name = _extract_professor(h)
+        
+        # ids para o /detail
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
         
-        # sempre buscamos o detail porque também precisamos da Pista
+        # buscamos o detail (vamos usar para Professor/Pista/Alunos)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
         
-        # completa professor se faltar (como você já implementou)
+        # completa professor se faltou
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
             if not prof_name and isinstance(detail.get("instructor"), dict):
@@ -499,13 +502,38 @@ def _materialize_rows(atividades, agenda_items):
                         break
         prof_name = (prof_name or "(Sem professor)")
         
-        # ➜ NOVO: extrai Pista (A/B) do detail
+        # ➜ Pista (A/B) a partir do detail
         pista = _extract_pista(detail) or "(Sem pista)"
         
+        # horários
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
         hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
         
-        # (…capacity/available/bookados como já estão…)
+        # ids auxiliares
+        schedule_id = _first(
+            h,
+            "idAtividadeSessao", "idConfiguration", "idGroupActivity",
+            "idActivitySchedule", "scheduleId", "idSchedule",
+            "idActivityScheduleClass", "idClassSchedule", "idScheduleClass",
+            "idActivityScheduleTime", "activityScheduleId",
+            "idClass", "idTime", "id", "Id"
+        )
+        
+        # capacidade/ocupação
+        capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
+        filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
+        available = _safe_int(_first(h, "available", "vacancies"))
+        if available is None and capacity is not None and filled is not None:
+            available = max(0, capacity - filled)
+        
+        # ➜ Alunos (do detail)
+        alunos = _extract_alunos(detail)
+        aluno_cols = ["vazio", "vazio", "vazio"]
+        for i in range(min(3, len(alunos))):
+            aluno_cols[i] = alunos[i]
+        # regra: se a aula tiver apenas 2 vagas, Aluno 3 = "N.A"
+        if capacity == 2:
+            aluno_cols[2] = "N.A"
         
         if date_val:
             rows.append({
@@ -525,6 +553,7 @@ def _materialize_rows(atividades, agenda_items):
                 "Aluno 2": aluno_cols[1],
                 "Aluno 3": aluno_cols[2],
             })
+
 
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
     return rows
@@ -977,6 +1006,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
