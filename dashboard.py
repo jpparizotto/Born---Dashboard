@@ -158,6 +158,9 @@ def _ensure_base_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Ocupacao%" not in df.columns:
         df["Ocupacao%"] = (df["Bookados"] / df["Capacidade"] * 100)
         df["Ocupacao%"] = df["Ocupacao%"].replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
+    # Garantir coluna Professor mesmo em CSVs antigos
+    if "Professor" not in df.columns:
+        df["Professor"] = None
 
     return df
 
@@ -767,38 +770,30 @@ st.plotly_chart(fig3, width="stretch")
 
 # Gráfico — Aulas por professor (contagem de slots/aulas)
 df_prof = df.copy()
-df_prof["Professor"] = df_prof["Professor"].fillna("(Sem professor)")
 
-grp_prof = df_prof.groupby("Professor", as_index=False).agg(
-    Aulas=("Horario", "count"),
-    Bookados=("Bookados", "sum"),
-)
+if "Professor" not in df_prof.columns or df_prof["Professor"].isna().all():
+    st.info("Ainda não há dados de professor neste arquivo/período. Gere um CSV novo em “🔄 Atualizar agora”.")
+else:
+    df_prof["Professor"] = df_prof["Professor"].fillna("(Sem professor)")
+    grp_prof = df_prof.groupby("Professor", as_index=False).agg(
+        Aulas=("Horario", "count"),
+        Bookados=("Bookados", "sum"),
+    ).sort_values("Aulas", ascending=False)
 
-# Ordena por quem mais deu aulas; opcional: limitar top-N pra visual ficar limpo
-grp_prof = grp_prof.sort_values("Aulas", ascending=False)
-
-fig_prof = px.bar(
-    grp_prof,
-    x="Professor",
-    y="Aulas",
-    title="Aulas por Professor (período selecionado)",
-    labels={"Aulas": "Aulas (contagem)", "Professor": "Professor"},
-    text="Aulas",
-)
-
-fig_prof.update_traces(
-    texttemplate="%{text:d}",
-    textposition="outside",
-    hovertemplate="<b>%{x}</b><br>Aulas: %{y:d}<br>Bookados (soma): %{customdata[0]:d}<extra></extra>",
-    customdata=np.stack([grp_prof["Bookados"]], axis=-1)
-)
-
-fig_prof.update_layout(
-    xaxis_tickangle=-25,
-    margin=dict(t=60, b=80),
-)
-
-st.plotly_chart(fig_prof, use_container_width=True)
+    fig_prof = px.bar(
+        grp_prof, x="Professor", y="Aulas",
+        title="Aulas por Professor (período selecionado)",
+        labels={"Aulas": "Aulas (contagem)", "Professor": "Professor"},
+        text="Aulas",
+    )
+    fig_prof.update_traces(
+        texttemplate="%{text:d}",
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>Aulas: %{y:d}<br>Bookados (soma): %{customdata[0]:d}<extra></extra>",
+        customdata=np.stack([grp_prof["Bookados"]], axis=-1),
+    )
+    fig_prof.update_layout(xaxis_tickangle=-25, margin=dict(t=60, b=80))
+    st.plotly_chart(fig_prof, use_container_width=True)
 
 # Heatmap — Data × Horário
 grp_hh = df.groupby(["Data", "Horario"], as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"))
@@ -851,6 +846,7 @@ with col_b:
     _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
