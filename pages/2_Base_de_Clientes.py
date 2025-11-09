@@ -17,6 +17,7 @@ st.set_page_config(page_title="Base de Clientes — Born to Ski", page_icon="�
 st.title("👥 Base de Clientes — Born to Ski")
 
 BASE_URL = "https://evo-integracao.w12app.com.br/api/v1"
+BASE_URL_V2 = "https://evo-integracao-api.w12app.com.br/api/v2"
 VERIFY_SSL = True
 
 EVO_USER = st.secrets.get("EVO_USER", os.environ.get("EVO_USER", ""))
@@ -153,7 +154,33 @@ def _to_list(maybe):
             if k in maybe and isinstance(maybe[k], list):
                 return maybe[k]
     return []
+import requests
 
+def _get_json_v2(path, params=None):
+    url = f"{BASE_URL_V2.rstrip('/')}/{path.lstrip('/')}"
+    # Basic Auth igual ao v1
+    import base64
+    auth_str = f"{EVO_USER}:{EVO_TOKEN}"
+    b64 = base64.b64encode(auth_str.encode()).decode()
+    headers = {"Authorization": f"Basic {b64}", "Accept": "application/json"}
+
+    r = requests.get(url, headers=headers, params=params or {}, verify=VERIFY_SSL, timeout=60)
+    if r.status_code == 204:
+        return []
+    if r.status_code != 200:
+        raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:400]}")
+    try:
+        data = r.json()
+    except Exception:
+        data = []
+    # alguns tenants retornam lista direta; outros envelopam
+    if isinstance(data, dict):
+        for k in ("data", "items", "results", "list", "rows"):
+            if k in data and isinstance(data[k], list):
+                return data[k]
+    return data if isinstance(data, list) else []
+
+    
 # ──────────────────────────────────────────────────────────────────────────────
 # COLETA DE CLIENTES (paginada, tentando diferentes esquemas)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -174,99 +201,85 @@ if dbg:
 
 def _fetch_customers(max_pages=None, page_size=100):
     """
-    Usa o 'probe' para descobrir endpoint e paginador que mais retorna dados,
-    depois pagina até esgotar (considera header 'total' quando disponível).
+    Busca clientes via v2 /members com paginação take/skip.
+    Normaliza: IdCliente, Nome, Sexo, Nascimento, Idade, Bairro, Cidade, UF, CEP, Email, Telefone, CriadoEm.
     """
-    # 1) detectar melhor combinação
-    report, best = probe_customers(page_size=min(page_size, 100))
-    if not best or best["score"] == 0:
-        return pd.DataFrame()
-
-    ep = best["ep"]
-    paginator = best["paginator"]
-    base_params = best["params"]
-    use_branch = best["use_branch"]
-    id_branch = _listar_id_branch()
-
-    # função para gerar params por página conforme o paginador escolhido
-    def build_params(page, size):
-        offset = (page - 1) * size
-        if paginator == "take/skip":
-            p = {"take": size, "skip": offset}
-        elif paginator == "page/size":
-            p = {"page": page, "size": size}
-        elif paginator == "pageNumber/pageSize":
-            p = {"pageNumber": page, "pageSize": size}
-        elif paginator == "offset/limit":
-            p = {"offset": offset, "limit": size}
-        elif paginator == "start/count":
-            p = {"start": offset, "count": size}
-        elif paginator == "skip/take":
-            p = {"skip": offset, "take": size}
-        else:
-            p = base_params.copy()
-        if use_branch and id_branch:
-            p["idBranch"] = id_branch
-        return p
-
-    # 2) paginação real
-    take = min(max(1, int(page_size)), 100)
+    take = min(max(1, int(page_size)), 100)   # v2 costuma aceitar até 100
+    skip = 0
     page = 1
-    total_target = None
     all_rows, seen = [], set()
 
     while True:
-        params = build_params(page, take)
-        ok, lst, total, hdrs, err = _safe_get_json(ep, params, False, None)  # idBranch já aplicado em build_params
-        if not ok:
-            break
-        if total_target is None:
-            total_target = total
+        params = {"take": take, "skip": skip, "showMemberships": "true"}
+        lst = _get_json_v2("members", params=params)
         if not lst:
             break
 
         for c in lst:
-            cid = c.get("id") or c.get("idCustomer") or c.get("customerId") or c.get("personId")
+            cid = (c.get("idMember") or c.get("memberId") or c.get("id") or c.get("Id"))
             if cid in seen:
                 continue
             seen.add(cid)
 
-            nome = c.get("name") or c.get("fullName") or c.get("displayName") or c.get("customerName") or c.get("personName") or ""
+            # Nome
+            nome = (c.get("fullName") or c.get("name") or "").strip()
+            if not nome:
+                fn = (c.get("firstName") or "").strip()
+                ln = (c.get("lastName") or "").strip()
+                nome = (fn + " " + ln).strip()
 
-            sexo = c.get("gender") or c.get("sexo") or c.get("sex") or ""
-            if isinstance(sexo, dict):
-                sexo = sexo.get("name") or sexo.get("description")
-            sx = (str(sexo).strip().lower() if sexo else "")
-            if sx in ("m", "masc", "masculino", "male"): sexo_fmt = "Masculino"
-            elif sx in ("f", "fem", "feminino", "female"): sexo_fmt = "Feminino"
-            elif sx: sexo_fmt = sx.capitalize()
+            # Sexo
+            sx = c.get("gender") or c.get("sexo") or c.get("sex") or ""
+            if isinstance(sx, dict):
+                sx = sx.get("name") or sx.get("description") or ""
+            sxn = str(sx).strip().lower()
+            if sxn in ("m","masc","masculino","male"): sexo_fmt = "Masculino"
+            elif sxn in ("f","fem","feminino","female"): sexo_fmt = "Feminino"
+            elif sxn: sexo_fmt = sxn.capitalize()
             else: sexo_fmt = "Não informado"
 
-            nasc_raw = c.get("birthDate") or c.get("birthday") or c.get("dtBirth") or c.get("birth")
-            idade = None; nascimento = None
-            if nasc_raw:
+            # Nascimento/Idade
+            nascimento = None; idade = None
+            b = c.get("birthDate") or c.get("birthday") or c.get("dtBirth")
+            if b:
                 try:
-                    dtn = parse_date(str(nasc_raw)).date()
+                    dtn = parse_date(str(b)).date()
                     nascimento = dtn.isoformat()
                     idade = int((date.today() - dtn).days // 365.25)
                     if idade < 0 or idade > 120: idade = None
                 except Exception:
                     pass
 
-            email = c.get("email") or c.get("mail") or ""
-            tel   = c.get("phone") or c.get("mobile") or c.get("cellphone") or c.get("telefone") or ""
+            # Contatos
+            email = c.get("email") or ""
+            tel   = c.get("phone") or c.get("mobile") or c.get("cellphone") or ""
+            # v2 geralmente tem contacts: [{type,value}]
+            if not email or not tel:
+                contacts = c.get("contacts") or []
+                if isinstance(contacts, list):
+                    for ct in contacts:
+                        t = str(ct.get("type") or "").upper()
+                        v = str(ct.get("value") or "").strip()
+                        if not v: 
+                            continue
+                        if not email and t in ("EMAIL","E-MAIL","MAIL"):
+                            email = v
+                        if not tel and t in ("MOBILE","CELULAR","CELLPHONE","PHONE","TELEFONE"):
+                            tel = v
 
-            addr = c.get("address") or c.get("endereco") or {}
-            if isinstance(addr, list) and addr: addr = addr[0]
+            # Endereço
+            bairro = cidade = uf = cep = ""
+            addr = c.get("addresses") or c.get("address") or []
             if isinstance(addr, dict):
-                bairro = (addr.get("neighborhood") or addr.get("bairro") or "").strip()
-                cidade = (addr.get("city") or addr.get("cidade") or "").strip()
-                uf     = (addr.get("state") or addr.get("uf") or "").strip()
-                cep    = (addr.get("zipCode") or addr.get("cep") or "").strip()
-            else:
-                bairro = cidade = uf = cep = ""
+                addr = [addr]
+            if isinstance(addr, list) and addr:
+                a0 = addr[0]
+                bairro = (a0.get("neighborhood") or a0.get("bairro") or "").strip()
+                cidade = (a0.get("city") or a0.get("cidade") or "").strip()
+                uf     = (a0.get("state") or a0.get("uf") or "").strip()
+                cep    = (a0.get("zipCode") or a0.get("cep") or "").strip()
 
-            criado = c.get("createdAt") or c.get("creationDate") or c.get("dtCreated") or ""
+            criado = c.get("createdAt") or c.get("creationDate") or ""
             if criado:
                 try:
                     criado = parse_date(str(criado)).date().isoformat()
@@ -274,7 +287,7 @@ def _fetch_customers(max_pages=None, page_size=100):
                     pass
 
             all_rows.append({
-                "IdCliente": cid,
+                "IdCliente": str(cid) if cid is not None else "",
                 "Nome": nome,
                 "Sexo": sexo_fmt,
                 "Nascimento": nascimento,
@@ -285,11 +298,10 @@ def _fetch_customers(max_pages=None, page_size=100):
             })
 
         page += 1
-        if total_target is not None and (page - 1) * take >= total_target:
-            break
+        skip += take
         if max_pages and page > max_pages:
             break
-        if len(lst) < take and total_target is None:
+        if len(lst) < take:
             break
 
     return pd.DataFrame(all_rows)
