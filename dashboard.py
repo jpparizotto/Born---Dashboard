@@ -315,6 +315,10 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
         params["idActivitySession"] = int(id_activity_session)
     try:
         detail = _get_json(f"{BASE_URL}/activities/schedule/detail", params=params) or {}
+        if str(config_id) in ("15601322", "15603289"):  # coloque aqui os IDs das aulas erradas
+            print("\n🔍 DETAIL DEBUG", config_id, activity_date_iso)
+            import json
+            print(json.dumps(detail, indent=2)[:1200])
         # algumas instalações envelopam em {"data": {...}}
         if isinstance(detail, dict) and "data" in detail and isinstance(detail["data"], dict):
             detail = detail["data"]
@@ -1096,6 +1100,7 @@ with col_c:
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
