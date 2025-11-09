@@ -67,7 +67,19 @@ def _safe_get_json(ep, params, use_branch, id_branch):
         return (True, lst, total, hdrs, None)
     except Exception as e:
         return (False, [], None, {}, str(e))
-
+        
+def _listar_id_branch():
+    try:
+        cfg = _get_json("configuration")
+        if isinstance(cfg, list):
+            for b in cfg:
+                bid = b.get("idBranch") or b.get("branchId") or b.get("id")
+                if bid:
+                    return bid
+    except Exception:
+        pass
+    return None
+    
 def probe_customers(endpoints=None, page_size=100, pages=2, try_branch=True, try_no_branch=True):
     """
     Testa várias combinações e devolve um relatório com:
@@ -159,18 +171,6 @@ if dbg:
         st.caption(f"↪️ Melhor combinação detectada: **{best['ep']}** com **{best['paginator']}** "
                    f"(use_idBranch={best['use_branch']}) — itens primeira página: {best['score']}, total_header={best['total']}")
         st.code(best["sample"], language="python")
-
-def _listar_id_branch():
-    try:
-        cfg = _get_json("configuration")
-        if isinstance(cfg, list):
-            for b in cfg:
-                bid = b.get("idBranch") or b.get("branchId") or b.get("id")
-                if bid:
-                    return bid
-    except Exception:
-        pass
-    return None
 
 def _fetch_customers(max_pages=None, page_size=100):
     """
