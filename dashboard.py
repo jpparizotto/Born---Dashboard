@@ -1057,7 +1057,37 @@ with col_c:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+import io
+
+st.divider()
+st.subheader("📋 Escala de Professores")
+
+# Seleciona e ordena colunas relevantes
+cols_prof = ["Data", "Início", "Fim", "Pista", "Atividade", "Professor"]
+cols_existentes = [c for c in cols_prof if c in df.columns]
+df_prof_escala = df[cols_existentes].sort_values(["Data", "Início", "Atividade"])
+
+# Gera o arquivo Excel em memória
+buffer_prof = io.BytesIO()
+with pd.ExcelWriter(buffer_prof, engine="xlsxwriter") as writer:
+    df_prof_escala.to_excel(writer, index=False, sheet_name="Escala")
+    worksheet = writer.sheets["Escala"]
+    # Ajusta largura de colunas automaticamente
+    for i, col in enumerate(df_prof_escala.columns):
+        max_len = max(df_prof_escala[col].astype(str).map(len).max(), len(col)) + 2
+        worksheet.set_column(i, i, min(max_len, 40))
+buffer_prof.seek(0)
+
+# Botão de download
+st.download_button(
+    label="⬇️ Baixar Escala de Professores",
+    data=buffer_prof.getvalue(),
+    file_name="escala_professores.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
