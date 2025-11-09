@@ -323,46 +323,73 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
     except Exception:
         return {}
 
-def _extract_alunos(container) -> list[str]:
+def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
     """
-    Tenta extrair uma lista de nomes de alunos a partir de várias chaves possíveis,
-    tanto do item bruto quanto do /activities/schedule/detail.
+    Extrai nomes de alunos a partir do payload de /activities/schedule/detail.
+    Se o detail trouxer várias sessões, filtra pelo horário de início (target_start).
     """
-    if not isinstance(container, dict):
+    if not isinstance(detail, dict):
         return []
 
-    # candidatos a listas de inscritos
-    list_keys = [
-        "students", "enrollments", "enrolled", "registrations",
-        "customers", "clients", "members", "participants", "persons", "users",
-        "alunos", "inscritos"
-    ]
+    # tenta descobrir o horário alvo a partir do próprio detail se não informado
+    if not target_start:
+        target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
+
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
+    list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
-    # 1) se vier diretamente como lista em alguma chave
-    for lk in list_keys:
-        lst = container.get(lk)
-        if isinstance(lst, list) and lst:
-            out = []
-            for item in lst:
-                if isinstance(item, dict):
-                    for nk in name_keys:
-                        if item.get(nk):
-                            out.append(str(item[nk]).strip())
-                            break
-                elif isinstance(item, str):
-                    out.append(item.strip())
-            return [n for n in out if n]
+    alunos = []
 
-    # 2) se vier em uma chave “enrollment” com subcampos
-    for k, v in container.items():
-        if isinstance(v, dict):
-            # procurar nomes em sub-dicts
+    def _get_name(obj):
+        if isinstance(obj, dict):
             for nk in name_keys:
-                if v.get(nk):
-                    return [str(v[nk]).strip()]
+                if obj.get(nk):
+                    return str(obj[nk]).strip()
+        elif isinstance(obj, str):
+            return obj.strip()
+        return None
 
-    return []
+    # alguns detalhes vêm como lista de objetos (uma por sessão/horário)
+    # ex.: detail["sessions"] = [{startTime: "...", registrations: [...]}, ...]
+    for sess_key in ["sessions", "classes", "scheduleItems"]:
+        sess_list = detail.get(sess_key)
+        if isinstance(sess_list, list) and sess_list:
+            for sess in sess_list:
+                if not isinstance(sess, dict):
+                    continue
+                sess_start = str(_first(sess, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
+                if target_start and sess_start and target_start != sess_start:
+                    continue
+                for lk in list_keys:
+                    lst = sess.get(lk)
+                    if isinstance(lst, list):
+                        for it in lst:
+                            nm = _get_name(it)
+                            if nm:
+                                alunos.append(nm)
+                        return alunos  # já achou a sessão correspondente
+            # se não achou nenhuma sessão correspondente, segue para leitura direta abaixo
+
+    # leitura direta (sem camada de "sessions")
+    for lk in list_keys:
+        lst = detail.get(lk)
+        if isinstance(lst, list):
+            for it in lst:
+                # se cada item tem seu próprio horário, filtra
+                item_start = str(_first(it, "startTime", "hourStart", "timeStart") or "").strip()
+                if item_start and target_start and item_start != target_start:
+                    continue
+                nm = _get_name(it)
+                if nm:
+                    alunos.append(nm)
+            break
+        elif isinstance(lst, dict):
+            nm = _get_name(lst)
+            if nm:
+                alunos.append(nm)
+            break
+
+    return alunos
 
 def _extract_professor(item):
     # tenta chaves diretas
@@ -478,12 +505,20 @@ def _materialize_rows(atividades, agenda_items):
             _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
         )
         
+        # horários do item-base
+        hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
+        hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
+        
         # tenta extrair professor direto do item
         prof_name = _extract_professor(h)
         
         # ids para o /detail
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
-        id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
+        id_activity_session = _first(
+            h,
+            "idActivitySession", "idActivityScheduleClass", "idClassSchedule",
+            "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
+        )
         
         # buscamos o detail (vamos usar para Professor/Pista/Alunos)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
@@ -502,12 +537,8 @@ def _materialize_rows(atividades, agenda_items):
                         break
         prof_name = (prof_name or "(Sem professor)")
         
-        # ➜ Pista (A/B) a partir do detail
+        # Pista (A/B) a partir do detail
         pista = _extract_pista(detail) or "(Sem pista)"
-        
-        # horários
-        hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
-        hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
         
         # ids auxiliares
         schedule_id = _first(
@@ -526,9 +557,22 @@ def _materialize_rows(atividades, agenda_items):
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
         
-        # ➜ Alunos (do detail)
-        alunos = _extract_alunos(detail)
+        # Alunos (do detail), filtrando por horário do item
+        alunos = _extract_alunos(detail, target_start=(hour_start or None))
+        
+        # se vier mais nomes do que a capacidade (p.ex., vazamento de outra sessão), corta
+        if capacity is not None and len(alunos) > capacity:
+            alunos = alunos[:capacity]
+        
+        # montar as 3 colunas conforme regra:
+        # - preencher com nomes encontrados
+        # - se faltar nome, completar com "vazio"
+        # - se a aula tiver apenas 2 vagas, Aluno 3 = "N.A"
         aluno_cols = ["vazio", "vazio", "vazio"]
+        for i in range(min(3, len(alunos))):
+            aluno_cols[i] = alunos[i]
+        if capacity == 2:
+            aluno_cols[2] = "N.A"
         for i in range(min(3, len(alunos))):
             aluno_cols[i] = alunos[i]
         # regra: se a aula tiver apenas 2 vagas, Aluno 3 = "N.A"
@@ -1052,6 +1096,7 @@ with col_c:
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
