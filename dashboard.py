@@ -1051,13 +1051,14 @@ with col_c:
             worksheet.set_column(i, i, min(max_len, 40))
 
     st.download_button(
-        label="⬇️ Baixar Excel (XLSX)",
+        label="⬇️ Baixar Grade (XLSX)",
         data=buffer.getvalue(),
         file_name="dados_filtrados.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
