@@ -33,6 +33,66 @@ if not EVO_USER or not EVO_TOKEN:
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS API
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _fix_mojibake(s: str) -> str:
+    """Corrige 'SÃ£o Paulo' → 'São Paulo' quando vier com encoding errado."""
+    if not isinstance(s, str) or not s:
+        return s
+    if "Ã" in s or "Õ" in s or "Â" in s:
+        try:
+            return s.encode("latin1").decode("utf-8")
+        except Exception:
+            return s
+    return s
+
+def _extract_address_any(c: dict):
+    """
+    Extrai endereço em vários formatos comuns do EVO.
+    Retorna (street, number, complement, neighborhood, city, state, zip).
+    """
+    # 1) Lista 'addresses' (mais comum no v2)
+    addr = c.get("addresses") or c.get("address") or []
+    if isinstance(addr, dict):
+        addr = [addr]
+    cand = addr[0] if isinstance(addr, list) and addr else {}
+
+    # 2) Fallback para campos chapados no root
+    flat = {
+        "street": c.get("street") or c.get("streetName") or c.get("publicPlace") or c.get("logradouro"),
+        "number": c.get("number") or c.get("streetNumber") or c.get("numero"),
+        "complement": c.get("complement") or c.get("complemento"),
+        "neighborhood": c.get("neighborhood") or c.get("bairro"),
+        "city": c.get("city") or c.get("cidade"),
+        "state": c.get("state") or c.get("uf") or c.get("stateCode") or c.get("stateInitials"),
+        "zipCode": c.get("zipCode") or c.get("cep") or c.get("postalCode"),
+    }
+
+    def pick(d: dict, *keys):
+        for k in keys:
+            v = d.get(k)
+            if v not in (None, "", []):
+                return v
+        return ""
+
+    street = pick(cand, "street", "streetName", "publicPlace", "logradouro") or flat["street"] or ""
+    number = pick(cand, "number", "streetNumber", "numero") or flat["number"] or ""
+    compl  = pick(cand, "complement", "complemento") or flat["complement"] or ""
+    neighb = pick(cand, "neighborhood", "bairro") or flat["neighborhood"] or ""
+    city   = pick(cand, "city", "cidade") or flat["city"] or ""
+    state  = pick(cand, "state", "uf", "stateCode", "stateInitials") or flat["state"] or ""
+    zipc   = pick(cand, "zipCode", "cep", "postalCode") or flat["zipCode"] or ""
+
+    # Corrige possíveis “SÃ£o Paulo”
+    street = _fix_mojibake(str(street).strip())
+    number = str(number).strip()
+    compl  = _fix_mojibake(str(compl).strip())
+    neighb = _fix_mojibake(str(neighb).strip())
+    city   = _fix_mojibake(str(city).strip())
+    state  = _fix_mojibake(str(state).strip())
+    zipc   = str(zipc).strip()
+
+    return street, number, compl, neighb, city, state, zipc
+
 def _auth_header_basic():
     auth_str = f"{EVO_USER}:{EVO_TOKEN}"
     b64 = base64.b64encode(auth_str.encode()).decode()
@@ -140,24 +200,11 @@ def _normalize_members_basic(raw_list):
                 continue
             if not email and t in ("EMAIL", "E-MAIL", "MAIL"):
                 email = v
-            if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE", "CELLPHONE"):
+            if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE"):
                 tel = v
 
         # Endereço (primeiro endereço disponível)
-        rua = numero = bairro = cidade = uf = cep = pais = complemento = ""
-        addr = c.get("addresses") or c.get("address") or []
-        if isinstance(addr, dict):
-            addr = [addr]
-        if isinstance(addr, list) and addr:
-            a0 = addr[0]
-            rua = (a0.get("street") or a0.get("logradouro") or "").strip()
-            numero = str(a0.get("number") or a0.get("numero") or "").strip()
-            complemento = (a0.get("complement") or a0.get("complemento") or "").strip()
-            bairro = (a0.get("neighborhood") or a0.get("bairro") or "").strip()
-            cidade = (a0.get("city") or a0.get("cidade") or "").strip()
-            uf = (a0.get("state") or a0.get("uf") or "").strip()
-            cep = (a0.get("zipCode") or a0.get("cep") or "").strip()
-            pais = (a0.get("country") or a0.get("pais") or "").strip()
+        street, number, compl, bairro, cidade, uf, cep = _extract_address_any(c)
 
         # Data de criação
         criado = c.get("createdAt") or c.get("creationDate") or ""
@@ -173,16 +220,23 @@ def _normalize_members_basic(raw_list):
             "Sexo": sexo_fmt,
             "Nascimento": nascimento,
             "Idade": idade,
-            "Email": email,
-            "Telefone": tel,
-            "Rua": rua,
-            "Número": numero,
-            "Complemento": complemento,
+
+            # Endereço detalhado
+            "Rua": street,
+            "Numero": number,
+            "Complemento": compl,
             "Bairro": bairro,
             "Cidade": cidade,
             "UF": uf,
             "CEP": cep,
-            "País": pais,
+
+            # Linha única (útil para conferência)
+            "EnderecoLinha": " | ".join([x for x in [street, number, compl, bairro, cidade, uf, cep] if x]),
+
+            # Contatos
+            "Email": email,
+            "Telefone": tel,
+
             "CriadoEm": criado,
         })
 
