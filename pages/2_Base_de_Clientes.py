@@ -30,6 +30,82 @@ if not EVO_USER or not EVO_TOKEN:
 # HELPERS API
 # ──────────────────────────────────────────────────────────────────────────────
 import requests
+
+# === DEBUG/PROBE HELPERS ===
+CANDIDATE_ENDPOINTS = [
+    "customers", "customer", "people", "person", "members", "clients",
+    # tente caminhos alternativos comuns em algumas instâncias EVO:
+    "crm/customers", "crm/clients", "person/list", "customer/list"
+]
+
+def _param_variants(page, size):
+    offset = (page - 1) * size
+    return [
+        ("take/skip", {"take": size, "skip": offset}),
+        ("page/size", {"page": page, "size": size}),
+        ("pageNumber/pageSize", {"pageNumber": page, "pageSize": size}),
+        ("offset/limit", {"offset": offset, "limit": size}),
+        ("start/count", {"start": offset, "count": size}),
+        ("skip/take", {"skip": offset, "take": size}),
+    ]
+
+def _safe_get_json(ep, params, use_branch, id_branch):
+    p = dict(params)
+    if use_branch and id_branch:
+        p["idBranch"] = id_branch
+    try:
+        data, hdrs = _get_json(ep, params=p, return_headers=True)
+        if isinstance(data, dict) and "data" in data:
+            data = data["data"]
+        lst = data if isinstance(data, list) else []
+        total_hdr = hdrs.get("total") or hdrs.get("Total") or hdrs.get("X-Total-Count")
+        total = None
+        try:
+            total = int(total_hdr) if total_hdr else None
+        except Exception:
+            total = None
+        return (True, lst, total, hdrs, None)
+    except Exception as e:
+        return (False, [], None, {}, str(e))
+
+def probe_customers(endpoints=None, page_size=100, pages=2, try_branch=True, try_no_branch=True):
+    """
+    Testa várias combinações e devolve um relatório com:
+    - endpoint
+    - paginador
+    - usar idBranch?
+    - itens na 1ª página
+    - header total
+    - erro (se houve)
+    - sample (primeiro item)
+    """
+    id_branch = _listar_id_branch()
+    endpoints = endpoints or CANDIDATE_ENDPOINTS
+    rows = []
+    best = None
+
+    for ep in endpoints:
+        for paginator, params in _param_variants(1, page_size):
+            for use_branch in ([True] if (try_branch and id_branch) else []) + ([False] if try_no_branch else []):
+                ok, lst, total, hdrs, err = _safe_get_json(ep, params, use_branch, id_branch)
+                rows.append({
+                    "endpoint": ep,
+                    "paginator": paginator,
+                    "use_idBranch": use_branch,
+                    "first_page_count": len(lst),
+                    "total_header": total,
+                    "error": err[:150] if err else "",
+                    "sample_keys": list(lst[0].keys())[:10] if ok and lst else [],
+                })
+                # guarda a melhor combinação até aqui
+                score = len(lst) if ok else 0
+                if (best is None) or (score > best["score"]):
+                    best = {"ep": ep, "paginator": paginator, "params": params, "use_branch": use_branch,
+                            "sample": lst[:3], "score": score, "total": total}
+
+    df_report = pd.DataFrame(rows).sort_values(["first_page_count", "total_header"], ascending=[False, False])
+    return df_report, best
+    
 def _auth_headers():
     import base64
     auth_str = f"{EVO_USER}:{EVO_TOKEN}"
@@ -69,6 +145,21 @@ def _to_list(maybe):
 # ──────────────────────────────────────────────────────────────────────────────
 # COLETA DE CLIENTES (paginada, tentando diferentes esquemas)
 # ──────────────────────────────────────────────────────────────────────────────
+
+st.sidebar.subheader("🔧 Modo debug")
+dbg = st.sidebar.checkbox("Ativar diagnóstico de clientes", value=False)
+dbg_size = st.sidebar.slider("Page size (debug)", 20, 200, 100, 10)
+
+if dbg:
+    with st.spinner("Testando endpoints e paginações..."):
+        report, best = probe_customers(page_size=dbg_size)
+    st.success("Diagnóstico concluído. Veja o relatório abaixo.")
+    st.dataframe(report, use_container_width=True, height=360)
+    if best:
+        st.caption(f"↪️ Melhor combinação detectada: **{best['ep']}** com **{best['paginator']}** "
+                   f"(use_idBranch={best['use_branch']}) — itens primeira página: {best['score']}, total_header={best['total']}")
+        st.code(best["sample"], language="python")
+
 def _listar_id_branch():
     try:
         cfg = _get_json("configuration")
@@ -83,61 +174,62 @@ def _listar_id_branch():
 
 def _fetch_customers(max_pages=None, page_size=100):
     """
-    Coleta todos os clientes usando take/skip conforme a doc do EVO.
-    - page_size: até 100 (alguns endpoints aceitam 100).
-    - Se o header 'total' vier, usamos como alvo; senão paramos quando o retorno vier < page_size.
+    Usa o 'probe' para descobrir endpoint e paginador que mais retorna dados,
+    depois pagina até esgotar (considera header 'total' quando disponível).
     """
-    id_branch = _listar_id_branch()
-
-    # Endpoints candidatos (o primeiro que responder vira o oficial)
-    endpoints = ["customers", "customer", "people", "person", "members", "clients"]
-    official_ep = None
-
-    # Descobre endpoint válido rápido (1 página)
-    for ep in endpoints:
-        try:
-            params_probe = {"take": 1, "skip": 0}
-            if id_branch:
-                params_probe["idBranch"] = id_branch
-            data, hdrs = _get_json(ep, params=params_probe, return_headers=True)
-            if isinstance(data, list):
-                official_ep = ep
-                break
-        except Exception:
-            continue
-
-    if not official_ep:
+    # 1) detectar melhor combinação
+    report, best = probe_customers(page_size=min(page_size, 100))
+    if not best or best["score"] == 0:
         return pd.DataFrame()
 
-    # Paginação take/skip até completar 'total'
-    all_rows, seen_ids = [], set()
+    ep = best["ep"]
+    paginator = best["paginator"]
+    base_params = best["params"]
+    use_branch = best["use_branch"]
+    id_branch = _listar_id_branch()
+
+    # função para gerar params por página conforme o paginador escolhido
+    def build_params(page, size):
+        offset = (page - 1) * size
+        if paginator == "take/skip":
+            p = {"take": size, "skip": offset}
+        elif paginator == "page/size":
+            p = {"page": page, "size": size}
+        elif paginator == "pageNumber/pageSize":
+            p = {"pageNumber": page, "pageSize": size}
+        elif paginator == "offset/limit":
+            p = {"offset": offset, "limit": size}
+        elif paginator == "start/count":
+            p = {"start": offset, "count": size}
+        elif paginator == "skip/take":
+            p = {"skip": offset, "take": size}
+        else:
+            p = base_params.copy()
+        if use_branch and id_branch:
+            p["idBranch"] = id_branch
+        return p
+
+    # 2) paginação real
     take = min(max(1, int(page_size)), 100)
-    skip = 0
+    page = 1
     total_target = None
+    all_rows, seen = [], set()
 
     while True:
-        params = {"take": take, "skip": skip}
-        if id_branch:
-            params["idBranch"] = id_branch
-
-        data, hdrs = _get_json(official_ep, params=params, return_headers=True)
+        params = build_params(page, take)
+        ok, lst, total, hdrs, err = _safe_get_json(ep, params, False, None)  # idBranch já aplicado em build_params
+        if not ok:
+            break
         if total_target is None:
-            # header pode vir como 'total' (string)
-            total_hdr = hdrs.get("total") or hdrs.get("Total") or hdrs.get("X-Total-Count")
-            try:
-                total_target = int(total_hdr) if total_hdr else None
-            except Exception:
-                total_target = None
-
-        lst = data if isinstance(data, list) else []
+            total_target = total
         if not lst:
             break
 
         for c in lst:
             cid = c.get("id") or c.get("idCustomer") or c.get("customerId") or c.get("personId")
-            if cid in seen_ids:
+            if cid in seen:
                 continue
-            seen_ids.add(cid)
+            seen.add(cid)
 
             nome = c.get("name") or c.get("fullName") or c.get("displayName") or c.get("customerName") or c.get("personName") or ""
 
@@ -150,7 +242,7 @@ def _fetch_customers(max_pages=None, page_size=100):
             elif sx: sexo_fmt = sx.capitalize()
             else: sexo_fmt = "Não informado"
 
-            nasc_raw = c.get("birthDate") or c.get("birthday") or c.get("dtBirth") or c.get("birth") or None
+            nasc_raw = c.get("birthDate") or c.get("birthday") or c.get("dtBirth") or c.get("birth")
             idade = None; nascimento = None
             if nasc_raw:
                 try:
@@ -159,7 +251,7 @@ def _fetch_customers(max_pages=None, page_size=100):
                     idade = int((date.today() - dtn).days // 365.25)
                     if idade < 0 or idade > 120: idade = None
                 except Exception:
-                    nascimento = None; idade = None
+                    pass
 
             email = c.get("email") or c.get("mail") or ""
             tel   = c.get("phone") or c.get("mobile") or c.get("cellphone") or c.get("telefone") or ""
@@ -192,11 +284,12 @@ def _fetch_customers(max_pages=None, page_size=100):
                 "CriadoEm": criado,
             })
 
-        skip += take
-        if total_target is not None and skip >= total_target:
+        page += 1
+        if total_target is not None and (page - 1) * take >= total_target:
             break
-        # sem header total: encerramos quando última página veio menor que o take
-        if len(lst) < take:
+        if max_pages and page > max_pages:
+            break
+        if len(lst) < take and total_target is None:
             break
 
     return pd.DataFrame(all_rows)
