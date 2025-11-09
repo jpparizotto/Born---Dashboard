@@ -461,58 +461,38 @@ def _extract_pista(container) -> str | None:
 def _materialize_rows(atividades, agenda_items):
     rows = []
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
+
     for h in agenda_items:
+        # ── Atividade/IDs básicos
         act_name_item = _first(h, "name", "activityDescription", "activityName", "description")
         if act_name_item:
             act_key = act_name_item.strip().lower()
             act_resolved = act_names.get(act_key)
             act_name_final = act_resolved["name"] if act_resolved else act_name_item
-            act_id_final = act_resolved["id"] if act_resolved else _first(h, "idActivity", "activityId", "id", "Id")
+            act_id_final   = act_resolved["id"]   if act_resolved else _first(h, "idActivity", "activityId", "id", "Id")
         else:
             act_name_final = "(Sem atividade)"
-            act_id_final = _first(h, "idActivity", "activityId", "id", "Id")
+            act_id_final   = _first(h, "idActivity", "activityId", "id", "Id")
 
-        # tenta extrair diretamente do item
-        prof_name = _extract_professor(h)
-        
-        # ids necessários para o /detail
-        config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
-        id_activity_session = _first(h, "idActivitySession", "idClass", "idScheduleClass", "idSchedule", "idTime")
-        
-        # se não achou professor no item, tenta no detalhe
-        if not prof_name:
-            # date_val já é calculado logo abaixo; precisamos dele aqui
-            # por isso mova o cálculo de date_val para cima deste bloco ou recalcule rapidamente:
-            date_val_tmp = _first(h, "_requestedDate") or _normalize_date_only(_first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
-            detail = _get_schedule_detail(config_id, date_val_tmp, id_activity_session)
-            prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
-        
-        prof_name = (prof_name or "(Sem professor)")
-
-        # calcula a data (usada também no /detail)
-        date_val = _first(h, "_requestedDate") or _normalize_date_only(
-            _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
-        )
-        
-        # horários do item-base
+        # ── Data e horários (usado no /detail e no CSV)
+        date_val   = _first(h, "_requestedDate") or _normalize_date_only(
+                        _first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
-        hour_end   = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
-        
-        # tenta extrair professor direto do item
-        prof_name = _extract_professor(h)
-        
-        # ids para o /detail
+        hour_end   = _first(h, "endTime",   "hourEnd",   "timeEnd",   "endHour")
+
+        # ── IDs para o /detail (tente ser abrangente)
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(
             h,
             "idActivitySession", "idActivityScheduleClass", "idClassSchedule",
             "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
         )
-        
-        # buscamos o detail (vamos usar para Professor/Pista/Alunos)
+
+        # ── Detail (uma vez só)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
-        
-        # completa professor se faltou
+
+        # ── Professor (item → detail)
+        prof_name = _extract_professor(h)
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
             if not prof_name and isinstance(detail.get("instructor"), dict):
@@ -525,11 +505,11 @@ def _materialize_rows(atividades, agenda_items):
                         prof_name = _first(cand, "name", "fullName", "displayName", "description") if isinstance(cand, dict) else str(cand)
                         break
         prof_name = (prof_name or "(Sem professor)")
-        
-        # Pista (A/B) a partir do detail
+
+        # ── Pista (A/B) via detail
         pista = _extract_pista(detail) or "(Sem pista)"
-        
-        # ids auxiliares
+
+        # ── IDs auxiliares para CSV
         schedule_id = _first(
             h,
             "idAtividadeSessao", "idConfiguration", "idGroupActivity",
@@ -538,43 +518,38 @@ def _materialize_rows(atividades, agenda_items):
             "idActivityScheduleTime", "activityScheduleId",
             "idClass", "idTime", "id", "Id"
         )
-        
-        # capacidade/ocupação
+
+        # ── Capacidade/ocupação
         capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
         filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
         available = _safe_int(_first(h, "available", "vacancies"))
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
-        
-        # Alunos (do detail), filtrando por horário do item
-        alunos = _extract_alunos(detail, target_start=(hour_start or None))
-        
-        # se vier mais nomes do que a capacidade (p.ex., vazamento de outra sessão), corta
-        if capacity is not None and len(alunos) > capacity:
-            alunos = alunos[:capacity]
-        
-        # montar as 3 colunas conforme regra:
-        # - preencher com nomes encontrados
-        # - se faltar nome, completar com "vazio"
-        # - se a aula tiver apenas 2 vagas, Aluno 3 = "N.A"
+
+        # ── Alunos (detail), filtrando pelo horário real do slot
+        alunos = _extract_alunos(detail, target_start=(hour_start or None)) or []
+
+        # ── Consistência pelos números (corta vazamento de nomes)
+        filled_calc = ((capacity or 0) - (available or 0)) if filled is None else filled
+        filled_calc = max(0, filled_calc)
+        expected    = min(filled_calc, (capacity or 0))   # máx. nomes = bookados, limitado à capacidade
+        alunos      = alunos[:expected]
+
+        # ── Monta Aluno 1..3
         aluno_cols = ["vazio", "vazio", "vazio"]
         for i in range(min(3, len(alunos))):
             aluno_cols[i] = alunos[i]
         if capacity == 2:
             aluno_cols[2] = "N.A"
-        for i in range(min(3, len(alunos))):
-            aluno_cols[i] = alunos[i]
-        # regra: se a aula tiver apenas 2 vagas, Aluno 3 = "N.A"
-        if capacity == 2:
-            aluno_cols[2] = "N.A"
-        
+
+        # ── Linha
         if date_val:
             rows.append({
                 "Data": date_val,
                 "Atividade": act_name_final,
-                "Pista": pista,                     # <<< NOVA COLUNA (antes de "Início")
+                "Pista": pista,                 # antes de "Início"
                 "Início": hour_start,
-                "Fim": hour_end,
+                "Fim":   hour_end,
                 "Horario": hour_start if hour_start else None,
                 "Capacidade": capacity or 0,
                 "Disponíveis": (available or 0),
@@ -587,18 +562,16 @@ def _materialize_rows(atividades, agenda_items):
                 "Aluno 3": aluno_cols[2],
             })
 
-
+    # ── Ordena e aplica fallback A/B para pistas “(Sem pista)”
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
-    # Após ordenar por (Data, Horario, Atividade), alternar Pista A/B quando vier "(Sem pista)"
     alt_idx_by_date = {}
     for r in rows:
-        # chave de dia
-        d = r["Data"]
-        # só aplica fallback se estiver sem pista
         if r.get("Pista") in (None, "", "(Sem pista)"):
+            d = r["Data"]
             i = alt_idx_by_date.get(d, 0)
             r["Pista"] = "A" if (i % 2 == 0) else "B"
             alt_idx_by_date[d] = i + 1
+
     return rows
 
 def gerar_csv(date_from: str | None = None, date_to: str | None = None) -> str:
@@ -1085,6 +1058,7 @@ with col_c:
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
