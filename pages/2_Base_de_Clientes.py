@@ -84,7 +84,8 @@ def fetch_members_v2_all(take=100):
 
 def _normalize_members_basic(raw_list):
     """
-    Normaliza um subconjunto “amigável” de campos para análises rápidas.
+    Normaliza um subconjunto “amigável” de campos para análises rápidas,
+    incluindo endereço completo.
     """
     out = []
     seen = set()
@@ -115,7 +116,7 @@ def _normalize_members_basic(raw_list):
         else:
             sexo_fmt = "Não informado"
 
-        # Nascimento/Idade
+        # Nascimento / Idade
         nascimento = None
         idade = None
         b = c.get("birthDate") or c.get("birthday") or c.get("dtBirth")
@@ -129,31 +130,36 @@ def _normalize_members_basic(raw_list):
             except Exception:
                 pass
 
-        # Contatos (primeiro email e primeiro telefone)
+        # Contatos
         email = c.get("email") or ""
         tel = c.get("phone") or c.get("mobile") or c.get("cellphone") or ""
         for ct in (c.get("contacts") or []):
             t = str(ct.get("type") or "").upper()
-            v = str(ct.get("value") or "").strip()
+            v = str(ct.get("value") or ct.get("description") or "").strip()
             if not v:
                 continue
             if not email and t in ("EMAIL", "E-MAIL", "MAIL"):
                 email = v
-            if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE"):
+            if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE", "CELLPHONE"):
                 tel = v
 
-        # Endereço (primeiro)
-        bairro = cidade = uf = cep = ""
+        # Endereço (primeiro endereço disponível)
+        rua = numero = bairro = cidade = uf = cep = pais = complemento = ""
         addr = c.get("addresses") or c.get("address") or []
         if isinstance(addr, dict):
             addr = [addr]
         if isinstance(addr, list) and addr:
             a0 = addr[0]
+            rua = (a0.get("street") or a0.get("logradouro") or "").strip()
+            numero = str(a0.get("number") or a0.get("numero") or "").strip()
+            complemento = (a0.get("complement") or a0.get("complemento") or "").strip()
             bairro = (a0.get("neighborhood") or a0.get("bairro") or "").strip()
             cidade = (a0.get("city") or a0.get("cidade") or "").strip()
             uf = (a0.get("state") or a0.get("uf") or "").strip()
             cep = (a0.get("zipCode") or a0.get("cep") or "").strip()
+            pais = (a0.get("country") or a0.get("pais") or "").strip()
 
+        # Data de criação
         criado = c.get("createdAt") or c.get("creationDate") or ""
         if criado:
             try:
@@ -161,22 +167,25 @@ def _normalize_members_basic(raw_list):
             except Exception:
                 pass
 
-        out.append(
-            {
-                "IdCliente": str(cid) if cid is not None else "",
-                "Nome": nome,
-                "Sexo": sexo_fmt,
-                "Nascimento": nascimento,
-                "Idade": idade,
-                "Bairro": bairro,
-                "Cidade": cidade,
-                "UF": uf,
-                "CEP": cep,
-                "Email": email,
-                "Telefone": tel,
-                "CriadoEm": criado,
-            }
-        )
+        out.append({
+            "IdCliente": str(cid) if cid is not None else "",
+            "Nome": nome,
+            "Sexo": sexo_fmt,
+            "Nascimento": nascimento,
+            "Idade": idade,
+            "Email": email,
+            "Telefone": tel,
+            "Rua": rua,
+            "Número": numero,
+            "Complemento": complemento,
+            "Bairro": bairro,
+            "Cidade": cidade,
+            "UF": uf,
+            "CEP": cep,
+            "País": pais,
+            "CriadoEm": criado,
+        })
+
     return pd.DataFrame(out)
 
 def _excel_bytes(df, sheet_name="Sheet1"):
