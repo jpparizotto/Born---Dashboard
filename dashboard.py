@@ -328,33 +328,25 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
         return {}
 
 def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
-    """
-    Extrai nomes de alunos a partir do payload de /activities/schedule/detail.
-    Se o detail trouxer várias sessões, filtra pelo horário de início (target_start).
-    """
     if not isinstance(detail, dict):
         return []
-
-    # tenta descobrir o horário alvo a partir do próprio detail se não informado
+    # horário alvo
     if not target_start:
         target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
 
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
-    alunos = []
-
-    def _get_name(obj):
-        if isinstance(obj, dict):
-            for nk in name_keys:
-                if obj.get(nk):
-                    return str(obj[nk]).strip()
-        elif isinstance(obj, str):
-            return obj.strip()
+    def _name(o):
+        if isinstance(o, dict):
+            for k in name_keys:
+                if o.get(k):
+                    return str(o[k]).strip()
+        elif isinstance(o, str):
+            return o.strip()
         return None
 
-    # alguns detalhes vêm como lista de objetos (uma por sessão/horário)
-    # ex.: detail["sessions"] = [{startTime: "...", registrations: [...]}, ...]
+    # 1) Estrutura por sessões (preferencial)
     for sess_key in ["sessions", "classes", "scheduleItems"]:
         sess_list = detail.get(sess_key)
         if isinstance(sess_list, list) and sess_list:
@@ -366,35 +358,28 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
                     continue
                 for lk in list_keys:
                     lst = sess.get(lk)
-                    if isinstance(lst, list):
-                        for it in lst:
-                            nm = _get_name(it)
-                            if nm:
-                                alunos.append(nm)
-                        return alunos  # já achou a sessão correspondente
-            # se não achou nenhuma sessão correspondente, segue para leitura direta abaixo
+                    if isinstance(lst, list) and lst:
+                        return [n for it in lst if (n := _name(it))]
+            # se nenhuma sessao combina, seguimos para leitura direta
 
-    # leitura direta (sem camada de "sessions")
+    # 2) Leitura direta (sem camada de 'sessions'), filtrando por horário por item se existir
+    alunos = []
     for lk in list_keys:
         lst = detail.get(lk)
         if isinstance(lst, list):
             for it in lst:
-                # se cada item tem seu próprio horário, filtra
                 item_start = str(_first(it, "startTime", "hourStart", "timeStart") or "").strip()
                 if item_start and target_start and item_start != target_start:
                     continue
-                nm = _get_name(it)
-                if nm:
-                    alunos.append(nm)
+                if (n := _name(it)):
+                    alunos.append(n)
             break
         elif isinstance(lst, dict):
-            nm = _get_name(lst)
-            if nm:
-                alunos.append(nm)
+            if (n := _name(lst)):
+                alunos.append(n)
             break
-
     return alunos
-
+    
 def _extract_professor(item):
     # tenta chaves diretas
     for k in ["teacher", "teacherName", "instructor", "instructorName",
@@ -1100,6 +1085,7 @@ with col_c:
     )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
