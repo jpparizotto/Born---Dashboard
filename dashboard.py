@@ -1053,7 +1053,7 @@ with col_c:
     st.download_button(
         label="⬇️ Baixar Grade (XLSX)",
         data=buffer.getvalue(),
-        file_name="dados_filtrados.xlsx",
+        file_name="Grade.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -1087,6 +1087,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
