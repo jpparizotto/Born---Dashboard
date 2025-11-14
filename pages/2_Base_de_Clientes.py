@@ -13,6 +13,7 @@ import io
 import base64
 from time import sleep
 import re
+from db import init_db, upsert_client, add_level_snapshot, LEVEL_ORDER
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -31,7 +32,9 @@ EVO_TOKEN = st.secrets.get("EVO_TOKEN", os.environ.get("EVO_TOKEN", ""))
 if not EVO_USER or not EVO_TOKEN:
     st.error("Credenciais EVO auscentes. Configure EVO_USER e EVO_TOKEN em Secrets.")
     st.stop()
-
+    
+# Inicializa o banco interno de clientes/níveis
+init_db()
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS API / CACHE
 # ──────────────────────────────────────────────────────────────────────────────
@@ -202,6 +205,41 @@ def _excel_bytes(df, sheet_name="Sheet1"):
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO
 # ──────────────────────────────────────────────────────────────────────────────
+LEVEL_ORDER_MAP = LEVEL_ORDER  # reaproveita o dict do db.py
+
+def split_nome_e_nivel(nome: str):
+    """
+    Recebe algo como 'DANIEL BRUNS 1B' ou 'HENRIQUE BISSOCCHI 3A SB/2CSKI'
+    e retorna (nome_limpo, nivel_atual, nivel_ordem).
+
+    Regra atual:
+    - procura todos os padrões [1-4][A-D]
+    - escolhe o de MAIOR ordem (do pior pro melhor: 1A ... 4D)
+    - remove todos os códigos do texto do nome para gerar nome_limpo
+    """
+    import re
+
+    if not nome:
+        return "", None, None
+
+    nome_str = str(nome).strip()
+    matches = re.findall(r'([1-4][A-D])', nome_str.upper())
+    if not matches:
+        return nome_str, None, None
+
+    # escolhe o nível de maior ordem
+    best = max(matches, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
+    nivel_atual = best
+    nivel_ordem = LEVEL_ORDER_MAP.get(best)
+
+    # remove todos os códigos [1-4][A-D] do nome para ficar só o nome da pessoa
+    nome_limpo = nome_str
+    for code in set(matches):
+        nome_limpo = re.sub(r'\b' + re.escape(code) + r'\b', '', nome_limpo, flags=re.IGNORECASE)
+    # limpeza de espaços dobrados
+    nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip()
+
+    return nome_limpo, nivel_atual, nivel_ordem
 
 def _normalize_members_basic(raw_list):
     """
@@ -231,11 +269,15 @@ def _normalize_members_basic(raw_list):
         seen.add(cid)
 
         # Nome
-        nome = (c.get("fullName") or c.get("name") or "").strip()
-        if not nome:
+        # Nome bruto vindo do EVO (pode conter nível)
+        nome_bruto = (c.get("fullName") or c.get("name") or "").strip()
+        if not nome_bruto:
             fn = (c.get("firstName") or "").strip()
             ln = (c.get("lastName") or "").strip()
-            nome = (fn + " " + ln).strip()
+            nome_bruto = (fn + " " + ln).strip()
+
+        nome_limpo, nivel_atual, nivel_ordem = split_nome_e_nivel(nome_bruto)
+
 
         # Sexo
         sx = c.get("gender") or c.get("sexo") or c.get("sex") or ""
@@ -292,7 +334,10 @@ def _normalize_members_basic(raw_list):
 
         out.append({
             "IdCliente": str(cid) if cid is not None else "",
-            "Nome": nome,
+            "Nome": nome_bruto,          # com nível, como vem hoje
+            "NomeLimpo": nome_limpo,     # só o nome da pessoa
+            "NivelAtual": nivel_atual,
+            "NivelOrdem": nivel_ordem,
             "Sexo": sexo_fmt,
             "Nascimento": nascimento,
             "Idade": idade,
@@ -376,6 +421,25 @@ if "_clientes_df" not in st.session_state:
     st.session_state["_clientes_df"] = _normalize_members_basic_cached(raw)
 
 dfc = st.session_state["_clientes_df"].copy()
+# ──────────────────────────────────────────────────────────────────────────────
+# Sincroniza base "amigável" com o banco interno (estado + histórico de nível)
+# ──────────────────────────────────────────────────────────────────────────────
+sync_key = f"__db_synced_for_batch__{len(dfc)}"
+if not st.session_state.get(sync_key):
+    for _, row in dfc.iterrows():
+        # upsert do estado atual do cliente
+        upsert_client(row)
+
+        # snapshot de nível (usamos CriadoEm como "data do evento" de referência,
+        # ou hoje, se não houver)
+        data_evento = row.get("CriadoEm") or date.today().isoformat()
+        add_level_snapshot(
+            evo_id=row.get("IdCliente"),
+            nivel=row.get("NivelAtual"),
+            data_evento=data_evento,
+            origem="sync_members",
+        )
+    st.session_state[sync_key] = True
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Exportações
