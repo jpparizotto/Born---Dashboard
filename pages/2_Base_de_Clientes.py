@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pages/2_Base_de_Clientes.py
 import os
-from datetime import date
+from datetime import date, datetime
 from dateutil.parser import parse as parse_date
 
 import pandas as pd
@@ -11,6 +11,8 @@ import plotly.express as px
 import requests
 import io
 import base64
+from time import sleep
+import re
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -27,11 +29,11 @@ EVO_USER = st.secrets.get("EVO_USER", os.environ.get("EVO_USER", ""))
 EVO_TOKEN = st.secrets.get("EVO_TOKEN", os.environ.get("EVO_TOKEN", ""))
 
 if not EVO_USER or not EVO_TOKEN:
-    st.error("Credenciais EVO ausentes. Configure EVO_USER e EVO_TOKEN em Secrets.")
+    st.error("Credenciais EVO auscentes. Configure EVO_USER e EVO_TOKEN em Secrets.")
     st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HELPERS API
+# HELPERS API / CACHE
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _fix_mojibake(s: str) -> str:
@@ -54,7 +56,17 @@ def _extract_address_any(c: dict):
     addr = c.get("addresses") or c.get("address") or []
     if isinstance(addr, dict):
         addr = [addr]
-    cand = addr[0] if isinstance(addr, list) and addr else {}
+
+    cand = {}
+    if isinstance(addr, list) and addr:
+        # tenta endereço principal (isMain) se existir
+        main_list = [
+            a for a in addr
+            if isinstance(a, dict) and str(a.get("isMain", "")).lower() in ("true", "1")
+        ]
+        cand = (main_list[0] if main_list else addr[0]) or {}
+    else:
+        cand = {}
 
     # 2) Fallback para campos chapados no root
     flat = {
@@ -102,27 +114,54 @@ def _get_json_v2(path, params=None):
     """
     GET para a API v2 com Basic Auth.
     Retorna sempre uma LISTA (normaliza se vier 'data'/'items'/etc).
+    Implementa backoff exponencial para 429/5xx.
     """
     url = f"{BASE_URL_V2.rstrip('/')}/{path.lstrip('/')}"
     headers = {"Accept": "application/json", **_auth_header_basic()}
-    r = requests.get(url, headers=headers, params=params or {}, verify=VERIFY_SSL, timeout=60)
-    if r.status_code == 204:
-        return []
-    if r.status_code != 200:
-        raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:400]}")
-    try:
-        data = r.json()
-    except Exception:
-        return []
-    if isinstance(data, dict):
-        for k in ("data", "items", "results", "list", "rows"):
-            if k in data and isinstance(data[k], list):
-                return data[k]
-    return data if isinstance(data, list) else []
+    params = params or {}
+    backoff = 1.0
+
+    for _ in range(6):
+        try:
+            r = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL, timeout=60)
+            if r.status_code in (200, 204):
+                if r.status_code == 204:
+                    return []
+                try:
+                    data = r.json()
+                except Exception:
+                    return []
+                if isinstance(data, dict):
+                    for k in ("data", "items", "results", "list", "rows"):
+                        if k in data and isinstance(data[k], list):
+                            return data[k]
+                return data if isinstance(data, list) else []
+            # Rate limit / erro temporário
+            if r.status_code in (429, 500, 502, 503, 504):
+                sleep(backoff)
+                backoff = min(backoff * 2, 8)
+                continue
+            # Outras falhas “definitivas”
+            raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:400]}")
+        except requests.RequestException:
+            sleep(backoff)
+            backoff = min(backoff * 2, 8)
+
+    raise RuntimeError(f"Falha ao acessar {url} após múltiplas tentativas.")
+
+@st.cache_data(show_spinner=False, ttl=600)
+def _cached_get_v2(path: str, params_tuple):
+    """
+    Versão cacheada de _get_json_v2.
+    params_tuple deve ser algo como tuple(dict.items()) para ser hashable.
+    """
+    params = dict(params_tuple)
+    return _get_json_v2(path, params=params)
 
 def fetch_members_v2_all(take=100):
     """
     Pagina /members até acabar. Retorna a LISTA bruta (sem normalização).
+    Usa cache por página.
     """
     take = min(max(1, int(take)), 100)
     skip = 0
@@ -135,18 +174,54 @@ def fetch_members_v2_all(take=100):
             "includeAddress": "true",
             "includeContacts": "true",
         }
-        batch = _get_json_v2("members", params=params)
+        batch = _cached_get_v2("members", tuple(params.items()))
         if not batch:
             break
         all_rows.extend(batch)
         skip += take
     return all_rows
 
+def _excel_bytes(df, sheet_name="Sheet1"):
+    """
+    Converte DataFrame em bytes XLSX com fallback de engine.
+    """
+    buf = io.BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+            # Ajuste básico das primeiras colunas
+            ws = writer.sheets[sheet_name]
+            for i, col in enumerate(df.columns[:50]):
+                ws.set_column(i, i, min(max(len(str(col)) + 2, 16), 40))
+    except Exception:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buf.getvalue()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NORMALIZAÇÃO
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _normalize_members_basic(raw_list):
     """
     Normaliza um subconjunto “amigável” de campos para análises rápidas,
     incluindo endereço completo.
     """
+    def _clean_phone(v: str) -> str:
+        if not v:
+            return ""
+        digits = re.sub(r"\D", "", str(v))
+        if digits.startswith("55"):
+            return "+" + digits
+        if len(digits) in (10, 11):
+            return "+55" + digits
+        return "+" + digits if digits else ""
+
+    def _clean_email(v: str) -> str:
+        v = str(v or "").strip()
+        return v if "@" in v and "." in v.split("@")[-1] else ""
+
     out = []
     seen = set()
     for c in raw_list:
@@ -191,19 +266,20 @@ def _normalize_members_basic(raw_list):
                 pass
 
         # Contatos
-        email = c.get("email") or ""
-        tel = c.get("phone") or c.get("mobile") or c.get("cellphone") or ""
+        email = _clean_email(c.get("email") or "")
+        tel = _clean_phone(c.get("phone") or c.get("mobile") or c.get("cellphone") or "")
+
         for ct in (c.get("contacts") or []):
             t = str(ct.get("type") or "").upper()
             v = str(ct.get("value") or ct.get("description") or "").strip()
             if not v:
                 continue
             if not email and t in ("EMAIL", "E-MAIL", "MAIL"):
-                email = v
+                email = _clean_email(v)
             if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE"):
-                tel = v
+                tel = _clean_phone(v)
 
-        # Endereço (primeiro endereço disponível)
+        # Endereço (primeiro endereço disponível / principal)
         street, number, compl, bairro, cidade, uf, cep = _extract_address_any(c)
 
         # Data de criação
@@ -242,23 +318,17 @@ def _normalize_members_basic(raw_list):
 
     return pd.DataFrame(out)
 
-def _excel_bytes(df, sheet_name="Sheet1"):
-    """
-    Converte DataFrame em bytes XLSX com fallback de engine.
-    """
-    buf = io.BytesIO()
-    try:
-        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
-            # Ajuste básico das primeiras colunas
-            ws = writer.sheets[sheet_name]
-            for i, col in enumerate(df.columns[:50]):
-                ws.set_column(i, i, min(max(len(str(col)) + 2, 16), 40))
-    except Exception:
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
-    return buf.getvalue()
+@st.cache_data(show_spinner=False, ttl=600)
+def _normalize_members_basic_cached(raw_list):
+    return _normalize_members_basic(raw_list)
+
+def _invalidate_cache():
+    _cached_get_v2.clear()
+    _normalize_members_basic_cached.clear()
+    st.session_state.pop("_clientes_raw", None)
+    st.session_state.pop("_clientes_df", None)
+    st.session_state.pop("_clientes_full_df", None)
+    st.session_state.pop("__last_updated__", None)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # UI — Coleta
@@ -270,9 +340,7 @@ with st.sidebar:
     max_pages = st.slider("Máx. páginas", 1, 100, 10, 1, help="Só usado se 'Trazer todos' estiver desmarcado")
 
     if st.button("🔄 Atualizar agora", type="primary"):
-        st.session_state.pop("_clientes_raw", None)
-        st.session_state.pop("_clientes_df", None)
-        st.session_state.pop("_clientes_full_df", None)
+        _invalidate_cache()
 
 # Coleta
 if "_clientes_raw" not in st.session_state:
@@ -284,26 +352,28 @@ if "_clientes_raw" not in st.session_state:
             rows = []
             skip = 0
             for _ in range(max_pages):
-                batch = _get_json_v2("members", params={
+                params = {
                     "take": take,
                     "skip": skip,
                     "showMemberships": "true",
                     "includeAddress": "true",
                     "includeContacts": "true",
-                })
+                }
+                batch = _cached_get_v2("members", tuple(params.items()))
                 if not batch:
                     break
                 rows.extend(batch)
                 skip += take
             raw = rows
         st.session_state["_clientes_raw"] = raw
+        st.session_state["__last_updated__"] = datetime.now().strftime("%d/%m/%Y %H:%M")
 
 raw = st.session_state.get("_clientes_raw", [])
 st.success(f"Clientes carregados: {len(raw)}")
 
 # Normalização “amigável” para análises rápidas
 if "_clientes_df" not in st.session_state:
-    st.session_state["_clientes_df"] = _normalize_members_basic(raw)
+    st.session_state["_clientes_df"] = _normalize_members_basic_cached(raw)
 
 dfc = st.session_state["_clientes_df"].copy()
 
@@ -360,6 +430,8 @@ if df_full is not None and not df_full.empty:
 # ──────────────────────────────────────────────────────────────────────────────
 st.divider()
 
+st.caption(f"Atualizado em: {st.session_state.get('__last_updated__', '—')}")
+
 k1, k2, k3, k4 = st.columns(4)
 with k1:
     st.metric("Total de clientes", f"{len(dfc):,}".replace(",", "."))
@@ -369,9 +441,19 @@ with k2:
     else:
         st.metric("Idade média", "—")
 with k3:
-    st.metric("Com email", f"{int((dfc.get('Email', pd.Series([], dtype=str)).astype(bool)).sum())}")
+    qtd_email = int(dfc.get("Email", pd.Series([], dtype=str)).fillna("").astype(bool).sum())
+    st.metric("Com email", f"{qtd_email}")
 with k4:
-    st.metric("Com telefone", f"{int((dfc.get('Telefone', pd.Series([], dtype=str)).astype(bool)).sum())}")
+    qtd_tel = int(dfc.get("Telefone", pd.Series([], dtype=str)).fillna("").astype(bool).sum())
+    st.metric("Com telefone", f"{qtd_tel}")
+
+# Filtros
+colf0a, colf0b = st.columns(2)
+with colf0a:
+    uf_series = dfc.get("UF", pd.Series(dtype=str)).dropna()
+    sel_uf = st.multiselect("UF", sorted(uf_series.unique()), default=None)
+with colf0b:
+    termo = st.text_input("Buscar (nome, e-mail, telefone, ID)", "")
 
 colf1, colf2 = st.columns(2)
 with colf1:
@@ -381,15 +463,64 @@ with colf2:
     cidades = sorted([x for x in dfc.get("Cidade", pd.Series(dtype=str)).dropna().unique()])
     sel_cid = st.multiselect("Cidade", cidades, default=cidades)
 
+colf3, colf4 = st.columns(2)
+with colf3:
+    faixa_idade = st.slider("Faixa etária", 0, 90, (0, 90))
+with colf4:
+    filtrar_data = st.checkbox("Filtrar por data de criação?")
+    dt_min = None
+    if filtrar_data:
+        dt_min = st.date_input("Criados a partir de", value=date.today())
+
 mask = pd.Series(True, index=dfc.index)
+
 if sel_sexo:
     mask &= dfc.get("Sexo", pd.Series(index=dfc.index)).isin(sel_sexo)
 if sel_cid:
     mask &= dfc.get("Cidade", pd.Series(index=dfc.index)).isin(sel_cid)
+if sel_uf:
+    mask &= dfc.get("UF", pd.Series(index=dfc.index)).isin(sel_uf)
+
+# faixa etária
+if "Idade" in dfc.columns and dfc["Idade"].notna().any():
+    mask &= dfc["Idade"].fillna(-1).between(faixa_idade[0], faixa_idade[1], inclusive="both")
+
+# data criação
+if "CriadoEm" in dfc.columns and dt_min:
+    mask &= pd.to_datetime(dfc["CriadoEm"], errors="coerce").dt.date >= dt_min
+
+# busca textual simples
+if termo:
+    termo_low = termo.lower()
+    cols_busca = ["IdCliente", "Nome", "Email", "Telefone"]
+    presentes = [c for c in cols_busca if c in dfc.columns]
+    if presentes:
+        mask &= dfc[presentes].astype(str).apply(
+            lambda s: s.str.lower().str.contains(termo_low, na=False)
+        ).any(axis=1)
+
 dfv = dfc[mask].copy()
 
 st.caption(f"Filtrados: {len(dfv)}")
 
+# Exportar apenas filtrados
+colE1, colE2 = st.columns(2)
+with colE1:
+    st.download_button(
+        "⬇️ Baixar filtrado (CSV — amigável)",
+        dfv.to_csv(index=False, encoding="utf-8-sig"),
+        "clientes_filtrado_amigavel.csv",
+        "text/csv",
+    )
+with colE2:
+    st.download_button(
+        "⬇️ Baixar filtrado (XLSX — amigável)",
+        _excel_bytes(dfv, "ClientesFiltrados"),
+        "clientes_filtrado_amigavel.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# Gráficos
 gcols = st.columns(2)
 if "Sexo" in dfv.columns and not dfv.empty:
     with gcols[0]:
@@ -407,7 +538,10 @@ cols2 = st.columns(2)
 if "Bairro" in dfv.columns and not dfv.empty:
     with cols2[0]:
         top_bairro = (
-            dfv.groupby("Bairro", as_index=False).size().rename(columns={"size": "Clientes"}).sort_values("Clientes", ascending=False).head(20)
+            dfv.groupby("Bairro", as_index=False).size()
+            .rename(columns={"size": "Clientes"})
+            .sort_values("Clientes", ascending=False)
+            .head(20)
         )
         fig = px.bar(top_bairro, x="Bairro", y="Clientes", title="Top bairros (20)")
         fig.update_layout(xaxis_tickangle=-35)
@@ -416,7 +550,10 @@ if "Bairro" in dfv.columns and not dfv.empty:
 if "Cidade" in dfv.columns and not dfv.empty:
     with cols2[1]:
         top_cid = (
-            dfv.groupby("Cidade", as_index=False).size().rename(columns={"size": "Clientes"}).sort_values("Clientes", ascending=False).head(20)
+            dfv.groupby("Cidade", as_index=False).size()
+            .rename(columns={"size": "Clientes"})
+            .sort_values("Clientes", ascending=False)
+            .head(20)
         )
         fig = px.bar(top_cid, x="Cidade", y="Clientes", title="Top cidades (20)")
         fig.update_layout(xaxis_tickangle=-35)
