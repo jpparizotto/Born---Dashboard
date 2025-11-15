@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
-from db import get_conn, LEVELS
+from db import get_conn, LEVELS, init_db
 
 st.set_page_config(
     page_title="Evolução de Nível — Born to Ski",
@@ -19,12 +19,14 @@ st.set_page_config(
 
 st.title("📈 Evolução de Nível por Cliente")
 
+# inicializa as tabelas do banco (clients, level_history, member_sessions)
+init_db()
 # ----------------------------------------------------------------------
 # Carrega dados do banco
 # ----------------------------------------------------------------------
 conn = get_conn()
 
-# Tenta carregar tabela de clientes
+# Tenta carregar tabela de clientes com mensagem mais clara
 try:
     df_clients = pd.read_sql_query(
         "SELECT id, evo_id, nome_bruto, nome_limpo, nivel_atual, nivel_ordem, "
@@ -32,8 +34,13 @@ try:
         "FROM clients ORDER BY nome_limpo COLLATE NOCASE",
         conn,
     )
-except Exception:
-    st.error("Não foi possível ler a tabela 'clients'. Já rodou a página de Base de Clientes ao menos uma vez?")
+except Exception as e:
+    st.error(
+        "Não foi possível ler a tabela 'clients'.\n\n"
+        "Verifique se você já abriu a página **Base de Clientes** pelo menos uma vez "
+        "(ela é a responsável por popular o banco)."
+    )
+    st.caption(f"Erro interno (resumido): {type(e).__name__}")
     st.stop()
 
 if df_clients.empty:
