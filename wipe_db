@@ -1,0 +1,13 @@
+import streamlit as st
+from pathlib import Path
+
+st.title("Apagar banco de dados local")
+
+db_path = Path(__file__).parent / "data" / "bts_clients.db"
+
+if st.button("APAGAR ARQUIVO data/bts_clients.db"):
+    if db_path.exists():
+        db_path.unlink()
+        st.success("Arquivo apagado com sucesso!")
+    else:
+        st.warning("Arquivo não encontrado — talvez já tenha sido removido.")
