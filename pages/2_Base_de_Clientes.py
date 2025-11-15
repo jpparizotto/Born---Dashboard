@@ -414,7 +414,7 @@ def _sync_clientes_para_db(dfc: pd.DataFrame):
             telefone = r.get("Telefone")
             criado_em = r.get("CriadoEm")
 
-            # pega nível anterior (se existir) antes de atualizar
+            # nível anterior antes de atualizar
             cur = conn.execute(
                 "SELECT nivel_atual FROM clients WHERE evo_id = ?",
                 (evo_id,),
@@ -476,7 +476,7 @@ def _sync_clientes_para_db(dfc: pd.DataFrame):
                 data_evento = date.today().isoformat()  # por enquanto usa hoje como data da mudança
                 conn.execute(
                     """
-                    INSERT INTO level_history (
+                    INSERT OR IGNORE INTO level_history (
                         evo_id,
                         data_evento,
                         nivel,
