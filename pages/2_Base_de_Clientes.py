@@ -14,6 +14,9 @@ import io
 import base64
 from time import sleep
 import re
+from datetime import datetime  # você já tem date, mas agora precisa de datetime também
+from db import init_db, get_conn, LEVELS
+import re
 
 from db import (
     init_db,
@@ -349,6 +352,148 @@ def _normalize_members_basic(raw_list):
 
     return pd.DataFrame(out)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# HELPERS DE NÍVEL / DB
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _extract_nome_e_nivel(nome: str):
+    """
+    Recebe algo como 'JOÃO PAULO PARIZOTTO 3C' e devolve:
+      ( 'JOÃO PAULO PARIZOTTO', '3C', ordem )
+
+    Se não achar nível, devolve (nome, None, None).
+    """
+    if not isinstance(nome, str) or not nome.strip():
+        return nome, None, None
+
+    txt = nome.strip()
+    # procura todos os códigos tipo 1A,1B,...,4D
+    matches = re.findall(r"\b([1-4][ABCD])\b", txt.upper())
+    nivel = matches[-1] if matches else None
+
+    nome_limpo = txt
+    if nivel:
+        # remove o nível do final do nome (ignorando maiúsc/minúsc)
+        nome_limpo = re.sub(
+            r"\s*\b" + re.escape(nivel) + r"\b\s*$",
+            "",
+            txt,
+            flags=re.IGNORECASE
+        ).strip()
+
+    try:
+        nivel_ordem = LEVELS.index(nivel) if nivel in LEVELS else None
+    except Exception:
+        nivel_ordem = None
+
+    return nome_limpo, nivel, nivel_ordem
+
+
+def _sync_clientes_para_db(dfc: pd.DataFrame):
+    """
+    Grava/atualiza clientes na tabela 'clients' e registra mudança de nível em 'level_history'.
+    """
+    init_db()
+    conn = get_conn()
+    now_iso = datetime.utcnow().isoformat()
+
+    with conn:
+        for _, r in dfc.iterrows():
+            evo_id = str(r.get("IdCliente") or "").strip()
+            if not evo_id:
+                continue
+
+            nome_bruto = r.get("Nome") or ""
+            nome_limpo, nivel, nivel_ordem = _extract_nome_e_nivel(nome_bruto)
+
+            sexo = r.get("Sexo")
+            cidade = r.get("Cidade")
+            bairro = r.get("Bairro")
+            uf = r.get("UF")
+            email = r.get("Email")
+            telefone = r.get("Telefone")
+            criado_em = r.get("CriadoEm")
+
+            # pega nível anterior (se existir) antes de atualizar
+            cur = conn.execute(
+                "SELECT nivel_atual FROM clients WHERE evo_id = ?",
+                (evo_id,),
+            )
+            row_prev = cur.fetchone()
+            nivel_anterior = row_prev[0] if row_prev else None
+
+            # upsert em clients
+            conn.execute(
+                """
+                INSERT INTO clients (
+                    evo_id,
+                    nome_bruto,
+                    nome_limpo,
+                    nivel_atual,
+                    nivel_ordem,
+                    sexo,
+                    cidade,
+                    bairro,
+                    uf,
+                    email,
+                    telefone,
+                    criado_em,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evo_id) DO UPDATE SET
+                    nome_bruto   = excluded.nome_bruto,
+                    nome_limpo   = excluded.nome_limpo,
+                    nivel_atual  = excluded.nivel_atual,
+                    nivel_ordem  = excluded.nivel_ordem,
+                    sexo         = excluded.sexo,
+                    cidade       = excluded.cidade,
+                    bairro       = excluded.bairro,
+                    uf           = excluded.uf,
+                    email        = excluded.email,
+                    telefone     = excluded.telefone,
+                    criado_em    = COALESCE(clients.criado_em, excluded.criado_em),
+                    updated_at   = excluded.updated_at
+                """,
+                (
+                    evo_id,
+                    nome_bruto,
+                    nome_limpo,
+                    nivel,
+                    nivel_ordem,
+                    sexo,
+                    cidade,
+                    bairro,
+                    uf,
+                    email,
+                    telefone,
+                    criado_em,
+                    now_iso,
+                ),
+            )
+
+            # se o nível mudou e temos um nível válido, grava no histórico
+            if nivel and nivel != nivel_anterior:
+                data_evento = date.today().isoformat()  # por enquanto usa hoje como data da mudança
+                conn.execute(
+                    """
+                    INSERT INTO level_history (
+                        evo_id,
+                        data_evento,
+                        nivel,
+                        nivel_ordem,
+                        origem,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        evo_id,
+                        data_evento,
+                        nivel,
+                        nivel_ordem,
+                        "sync_base_clientes",
+                        now_iso,
+                    ),
+                )
 
 @st.cache_data(show_spinner=False, ttl=600)
 def _normalize_members_basic_cached(raw_list):
@@ -530,7 +675,12 @@ if "_clientes_df" not in st.session_state:
     st.session_state["_clientes_df"] = _normalize_members_basic_cached(raw)
 
 dfc = st.session_state["_clientes_df"].copy()
-
+# grava/atualiza clientes + histórico de nível no banco
+try:
+    _sync_clientes_para_db(dfc)
+    st.caption("Base de clientes sincronizada com o banco interno (clients / level_history).")
+except Exception as e:
+    st.warning(f"Não foi possível sincronizar com o banco interno: {type(e).__name__}")
 # ──────────────────────────────────────────────────────────────────────────────
 # Sincroniza clientes + histórico de nível com o banco
 # ──────────────────────────────────────────────────────────────────────────────
