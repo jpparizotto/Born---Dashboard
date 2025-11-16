@@ -97,6 +97,16 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Linha do tempo de níveis
 # ---------------------------------------------------------------------------
+
+# Ordem de níveis (do pior pro melhor)
+LEVELS = [
+    "1A","1B","1C","1D",
+    "2A","2B","2C","2D",
+    "3A","3B","3C","3D",
+    "4A","4B","4C","4D",
+]
+LEVEL_INDEX = {lvl: i for i, lvl in enumerate(LEVELS)}  # 1A=0, 1B=1, ...
+
 st.subheader("Linha do tempo de níveis")
 
 if df_hist.empty:
@@ -109,29 +119,44 @@ else:
     # Ordena por data e prepara para o gráfico
     df_hist_plot = df_hist.sort_values("data").copy()
 
-    # Cria uma coluna datetime a partir de `data`
+    # Converte data em datetime
     df_hist_plot["data_dt"] = pd.to_datetime(
         df_hist_plot["data"], errors="coerce"
     )
 
-    # Gráfico em degrau usando line + line_shape="hv"
+    # Converte nível textual (1A, 3C, etc.) em índice 0..15
+    df_hist_plot["nivel_idx"] = df_hist_plot["nivel"].map(LEVEL_INDEX)
+
+    # Gráfico em degrau
     fig = px.line(
         df_hist_plot,
         x="data_dt",
-        y="nivel_ordem",   # coluna que vem do banco
+        y="nivel_idx",
         title="Linha do tempo de níveis",
         markers=True,
         text="nivel",
     )
 
-    fig.update_traces(line_shape="hv")  # deixa o gráfico com cara de degrau
+    fig.update_traces(line_shape="hv")
+
+    # Só mostra ticks para os níveis que aparecem na série
+    niveis_usados = [
+        lvl for lvl in LEVELS
+        if lvl in df_hist_plot["nivel"].dropna().unique()
+    ]
+
     fig.update_layout(
         xaxis_title="Data",
-        yaxis_title="Nível (ordem)",
+        yaxis_title="Nível",
+        yaxis=dict(
+            tickmode="array",
+            tickvals=[LEVEL_INDEX[lvl] for lvl in niveis_usados],
+            ticktext=niveis_usados,
+        ),
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
+    
 st.divider()
 
 st.subheader("Histórico de níveis (level_history)")
