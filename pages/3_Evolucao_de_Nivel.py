@@ -102,30 +102,34 @@ st.subheader("Linha do tempo de níveis")
 if df_hist.empty:
     st.info(
         "Ainda não há histórico de nível para este cliente.\n\n"
-        "Dica: altere o nível dele no EVO (no nome), depois vá em **Base de Clientes** → "
-        "**Atualizar clientes agora** → **Sincronizar clientes com banco interno**."
+        "Dica: altere o nível dele no EVO e depois rode 'Atualizar clientes agora' "
+        "na Base de Clientes."
     )
 else:
-    # Converte data para datetime para ordenar e plotar bonitinho
-    df_hist["data_dt"] = pd.to_datetime(df_hist["data"], errors="coerce")
+    # Ordena por data e prepara para o gráfico
+    df_hist_plot = df_hist.sort_values("data_evento").copy()
 
-    # Gráfico de linha / degrau
-    # Gráfico em degrau usando line com line_shape="hv"
+    # Garante que a coluna de data está como datetime (se ainda não estiver)
+    df_hist_plot["data_evento"] = pd.to_datetime(
+        df_hist_plot["data_evento"], errors="coerce"
+    )
+
+    # Gráfico em degrau usando line + line_shape="hv"
     fig = px.line(
         df_hist_plot,
         x="data_evento",
-        y="nivel_ordem",
+        y="nivel_ordem",   # ajuste se na sua tabela o nome for outro
         title="Linha do tempo de níveis",
         markers=True,
         text="nivel",
     )
-    
-    # Deixa com cara de gráfico de nível em degraus
-    fig.update_traces(line_shape="hv")  # horizontal-vertical (degrau)
+
+    fig.update_traces(line_shape="hv")  # deixa o gráfico com cara de degrau
     fig.update_layout(
         xaxis_title="Data",
         yaxis_title="Nível (ordem)",
     )
+
     st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
