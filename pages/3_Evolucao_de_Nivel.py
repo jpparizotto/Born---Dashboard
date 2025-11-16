@@ -110,22 +110,21 @@ else:
     df_hist["data_dt"] = pd.to_datetime(df_hist["data"], errors="coerce")
 
     # Gráfico de linha / degrau
-    fig = px.step(
-        df_hist.sort_values("data_dt"),
-        x="data_dt",
+    # Gráfico em degrau usando line com line_shape="hv"
+    fig = px.line(
+        df_hist_plot,
+        x="data_evento",
         y="nivel_ordem",
+        title="Linha do tempo de níveis",
         markers=True,
-        title="Evolução do nível ao longo do tempo",
+        text="nivel",
     )
+    
+    # Deixa com cara de gráfico de nível em degraus
+    fig.update_traces(line_shape="hv")  # horizontal-vertical (degrau)
     fig.update_layout(
         xaxis_title="Data",
         yaxis_title="Nível (ordem)",
-        hovermode="x unified",
-    )
-    # Mostra nível no hover em vez de só o número
-    fig.update_traces(
-        hovertemplate="Data=%{x|%d/%m/%Y}<br>Nível=%{customdata}",
-        customdata=df_hist["nivel"],
     )
     st.plotly_chart(fig, use_container_width=True)
 
