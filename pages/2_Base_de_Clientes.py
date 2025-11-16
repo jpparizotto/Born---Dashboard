@@ -26,6 +26,7 @@ from db import (
     get_client_by_evo,
     LEVEL_ORDER,
 )
+from db import sync_clients_from_df
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -676,11 +677,17 @@ if "_clientes_df" not in st.session_state:
 
 dfc = st.session_state["_clientes_df"].copy()
 # grava/atualiza clientes + histórico de nível no banco
-try:
-    _sync_clientes_para_db(dfc)
-    st.caption("Base de clientes sincronizada com o banco interno (clients / level_history).")
-except Exception as e:
-    st.warning(f"Não foi possível sincronizar com o banco interno: {type(e).__name__}")
+with st.expander("Sincronização com banco interno (CRM)", expanded=True):
+    if st.button("💾 Sincronizar clientes com banco interno"):
+        with st.spinner("Sincronizando clientes com o banco interno..."):
+            try:
+                n = sync_clients_from_df(dfc)
+            except Exception as e:
+                st.error("Não foi possível sincronizar com o banco interno.")
+                st.exception(e)
+            else:
+                st.success(f"Sincronização concluída para {n} clientes.")
+                st.caption("Agora você já pode ir na aba 'Evolução de Nível'.")
 # ──────────────────────────────────────────────────────────────────────────────
 # Sincroniza clientes + histórico de nível com o banco
 # ──────────────────────────────────────────────────────────────────────────────
