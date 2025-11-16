@@ -107,18 +107,18 @@ if df_hist.empty:
     )
 else:
     # Ordena por data e prepara para o gráfico
-    df_hist_plot = df_hist.sort_values("data_evento").copy()
+    df_hist_plot = df_hist.sort_values("data").copy()
 
-    # Garante que a coluna de data está como datetime (se ainda não estiver)
-    df_hist_plot["data_evento"] = pd.to_datetime(
-        df_hist_plot["data_evento"], errors="coerce"
+    # Cria uma coluna datetime a partir de `data`
+    df_hist_plot["data_dt"] = pd.to_datetime(
+        df_hist_plot["data"], errors="coerce"
     )
 
     # Gráfico em degrau usando line + line_shape="hv"
     fig = px.line(
         df_hist_plot,
-        x="data_evento",
-        y="nivel_ordem",   # ajuste se na sua tabela o nome for outro
+        x="data_dt",
+        y="nivel_ordem",   # coluna que vem do banco
         title="Linha do tempo de níveis",
         markers=True,
         text="nivel",
