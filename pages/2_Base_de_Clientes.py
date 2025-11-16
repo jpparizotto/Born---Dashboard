@@ -2,7 +2,7 @@
 # pages/2_Base_de_Clientes.py
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date  # se não estiver usando datetime/timedelta neste arquivo, pode tirar
 from dateutil.parser import parse as parse_date
 
 import pandas as pd
@@ -14,19 +14,9 @@ import io
 import base64
 from time import sleep
 import re
-from datetime import datetime  # você já tem date, mas agora precisa de datetime também
-from db import init_db, get_conn
-import re
 
-from db import (
-    init_db,
-    upsert_client,
-    add_level_snapshot,
-    upsert_session,
-    get_client_by_evo,
-    LEVEL_ORDER,
-)
 from db import sync_clients_from_df
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
