@@ -2,7 +2,7 @@
 # pages/2_Base_de_Clientes.py
 
 import os
-from datetime import date  # se não estiver usando datetime/timedelta neste arquivo, pode tirar
+from datetime import date
 from dateutil.parser import parse as parse_date
 
 import pandas as pd
@@ -16,7 +16,6 @@ from time import sleep
 import re
 
 from db import sync_clients_from_df
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -34,9 +33,6 @@ EVO_TOKEN = st.secrets.get("EVO_TOKEN", os.environ.get("EVO_TOKEN", ""))
 if not EVO_USER or not EVO_TOKEN:
     st.error("Credenciais EVO auscentes. Configure EVO_USER e EVO_TOKEN em Secrets.")
     st.stop()
-
-# Inicializa banco interno
-init_db()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS API
@@ -203,7 +199,13 @@ def _excel_bytes(df, sheet_name="Sheet1"):
 # NOME + NÍVEL
 # ──────────────────────────────────────────────────────────────────────────────
 
-LEVEL_ORDER_MAP = LEVEL_ORDER  # reaproveita do db.py
+# Mapa local de ordem de nível (independente do db.py)
+LEVEL_ORDER_MAP = {
+    "1A": 10, "1B": 11, "1C": 12, "1D": 13,
+    "2A": 20, "2B": 21, "2C": 22, "2D": 23,
+    "3A": 30, "3B": 31, "3C": 32, "3D": 33,
+    "4A": 40, "4B": 41, "4C": 42, "4D": 43,
+}
 
 
 def split_nome_e_nivel(nome: str):
@@ -344,7 +346,7 @@ def _normalize_members_basic(raw_list):
     return pd.DataFrame(out)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HELPERS DE NÍVEL / DB
+# CACHES / INVALIDAÇÃO
 # ──────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -361,120 +363,6 @@ def _invalidate_cache():
     st.session_state.pop("__last_updated__", None)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SESSÕES (AULAS) – API v1
-# ──────────────────────────────────────────────────────────────────────────────
-
-def fetch_member_sessions_range(id_member: str, start: date, end: date, page_size: int = 200):
-    """
-    Busca sessões (aulas) do membro na API v1 /activities/schedule entre duas datas.
-
-    Parâmetros confirmados pelo teste:
-      - idMember
-      - initialDate (YYYY-MM-DD)
-      - finalDate   (YYYY-MM-DD)
-      - pageNumber
-      - pageSize
-
-    OBS: o endpoint retorna os campos:
-      idConfiguration, idActivity, idAtividadeSessao, name, area,
-      startTime, endTime, activityDate, statusName, memberStatus, etc.
-    """
-    all_rows = []
-    page = 1
-    while True:
-        params = {
-            "idMember": id_member,
-            "initialDate": start.isoformat(),
-            "finalDate": end.isoformat(),
-            "pageNumber": page,
-            "pageSize": page_size,
-        }
-        batch = _get_json_v1("activities/schedule", params=params)
-        if not batch:
-            break
-        all_rows.extend(batch)
-        if len(batch) < page_size:
-            break
-        page += 1
-    return all_rows
-
-
-
-def normalize_session_for_db(row: dict) -> dict:
-    """
-    Converte o JSON da sessão do EVO em um dict padrão para member_sessions.
-
-    Campos de entrada confirmados (activities/schedule):
-      - idConfiguration
-      - idActivity
-      - idAtividadeSessao
-      - name
-      - area
-      - startTime
-      - endTime
-      - activityDate (ex: '2025-11-15T00:00:00')
-      - statusName (ex: 'RestrictEnded', 'Full')
-      - memberStatus (pode ser null ou, quando tiver inscrição, algo como 'Booked', 'Present', etc.)
-
-    No banco, vamos guardar:
-      - activity_session_id
-      - configuration_id
-      - data (YYYY-MM-DD)
-      - start_time, end_time
-      - activity_name
-      - area_name
-      - status_activity
-      - status_client
-      - is_replacement (por enquanto sempre False, pois não veio no JSON)
-    """
-    raw_date = row.get("activityDate") or row.get("date")
-    data = None
-    if raw_date:
-        # vem no formato '2025-11-15T00:00:00'
-        data = str(raw_date).split("T")[0]
-
-    return {
-        "activity_session_id": row.get("idAtividadeSessao"),
-        "configuration_id": row.get("idConfiguration"),
-        "data": data,
-        "start_time": row.get("startTime"),
-        "end_time": row.get("endTime"),
-        "activity_name": row.get("name") or row.get("description"),
-        "area_name": row.get("area"),
-        "status_activity": row.get("statusName"),
-        "status_client": row.get("memberStatus"),
-        "is_replacement": False,
-        "origem": "evo_schedule",
-    }
-
-
-
-def sync_sessions_for_members(member_ids, days_past: int = 90, days_future: int = 30):
-    """
-    Para cada membro, busca aulas na janela [hoje - days_past, hoje + days_future]
-    e grava/atualiza em member_sessions.
-    """
-    hoje = date.today()
-    start = hoje - timedelta(days=days_past)
-    end = hoje + timedelta(days=days_future)
-
-    progress = st.progress(0.0)
-    total = len(member_ids)
-    for i, mid in enumerate(member_ids, start=1):
-        try:
-            raw_sess = fetch_member_sessions_range(str(mid), start, end)
-            for s in raw_sess:
-                norm = normalize_session_for_db(s)
-                if not norm.get("data"):
-                    continue
-                upsert_session(str(mid), norm)
-        except Exception as e:
-            st.warning(f"Falha ao sincronizar aulas do cliente {mid}: {e}")
-        progress.progress(i / total)
-
-    st.success("Sincronização de aulas concluída.")
-
-# ──────────────────────────────────────────────────────────────────────────────
 # UI — Coleta de clientes
 # ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -485,14 +373,6 @@ with st.sidebar:
 
     if st.button("🔄 Atualizar clientes agora", type="primary"):
         _invalidate_cache()
-
-    st.markdown("---")
-    st.subheader("Sessões (aulas)")
-    days_past = st.number_input("Dias passados para sincronizar", min_value=1, max_value=365, value=90, step=1)
-    days_future = st.number_input("Dias futuros para sincronizar", min_value=0, max_value=180, value=30, step=1)
-    if st.button("▶️ Sincronizar aulas de todos os clientes filtrados"):
-        # só vamos ter dfc depois, então guardo isso num flag
-        st.session_state["__sync_sessions_request__"] = (int(days_past), int(days_future))
 
 # Coleta de clientes do EVO
 if "_clientes_raw" not in st.session_state:
@@ -517,7 +397,8 @@ if "_clientes_raw" not in st.session_state:
                 skip += take
             raw = rows
         st.session_state["_clientes_raw"] = raw
-        st.session_state["__last_updated__"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        from datetime import datetime as _dt
+        st.session_state["__last_updated__"] = _dt.now().strftime("%d/%m/%Y %H:%M")
 
 raw = st.session_state.get("_clientes_raw", [])
 st.success(f"Clientes carregados: {len(raw)}")
@@ -527,7 +408,10 @@ if "_clientes_df" not in st.session_state:
     st.session_state["_clientes_df"] = _normalize_members_basic_cached(raw)
 
 dfc = st.session_state["_clientes_df"].copy()
-# grava/atualiza clientes + histórico de nível no banco
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sincroniza clientes + histórico de nível com o banco
+# ──────────────────────────────────────────────────────────────────────────────
 with st.expander("Sincronização com banco interno (CRM)", expanded=True):
     if st.button("💾 Sincronizar clientes com banco interno"):
         with st.spinner("Sincronizando clientes com o banco interno..."):
@@ -539,38 +423,6 @@ with st.expander("Sincronização com banco interno (CRM)", expanded=True):
             else:
                 st.success(f"Sincronização concluída para {n} clientes.")
                 st.caption("Agora você já pode ir na aba 'Evolução de Nível'.")
-# ──────────────────────────────────────────────────────────────────────────────
-# Sincroniza clientes + histórico de nível com o banco
-# ──────────────────────────────────────────────────────────────────────────────
-sync_key = f"__db_synced_for_batch__{len(dfc)}"
-if not st.session_state.get(sync_key):
-    with st.spinner("Sincronizando clientes com o banco interno..."):
-        for _, row in dfc.iterrows():
-            evo_id = row.get("IdCliente")
-            novo_nivel = row.get("NivelAtual")
-            # pega nível anterior antes de atualizar
-            cli = get_client_by_evo(str(evo_id)) if evo_id else None
-            old_level = cli["nivel_atual"] if cli else None
-
-            upsert_client(row)
-
-            # data_evento = None -> db.py tenta usar última aula com presença,
-            # caso exista; senão, usa hoje.
-            add_level_snapshot(
-                evo_id=str(evo_id),
-                novo_nivel=novo_nivel,
-                data_evento=None,
-                origem="sync_members",
-                old_level=old_level,
-            )
-    st.session_state[sync_key] = True
-
-# Se o user clicou para sincronizar aulas, faz isso agora que temos dfc
-if "__sync_sessions_request__" in st.session_state:
-    days_past, days_future = st.session_state.pop("__sync_sessions_request__")
-    with st.spinner("Sincronizando aulas dos clientes filtrados..."):
-        member_ids = dfc["IdCliente"].astype(str).tolist()
-        sync_sessions_for_members(member_ids, days_past=days_past, days_future=days_future)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Exportações
