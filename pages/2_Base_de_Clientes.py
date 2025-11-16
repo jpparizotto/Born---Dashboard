@@ -15,7 +15,7 @@ import base64
 from time import sleep
 import re
 from datetime import datetime  # você já tem date, mas agora precisa de datetime também
-from db import init_db, get_conn, LEVELS
+from db import init_db, get_conn
 import re
 
 from db import (
