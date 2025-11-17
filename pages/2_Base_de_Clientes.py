@@ -768,26 +768,30 @@ if selected_row is not None:
     )
     st.table(df_info)
 
+    # ID do cliente que será usado na EVO
+    id_cliente_evo = selected_row.get("IdCliente", "")
+
     st.subheader("📅 Aulas do cliente (histórico + futuras)")
 
-if id_cliente_evo:
-    aulas_cliente = fetch_member_activities_history(
-        id_cliente_evo,
-        dias_passado=365,  # por exemplo, 1 ano pra trás
-        dias_futuro=60,    # e 60 dias pra frente
-    )
-
-    if aulas_cliente:
-        st.subheader("Aulas do cliente (histórico + futuras)")
-        df_aulas = pd.DataFrame(aulas_cliente)
-        st.dataframe(
-            df_aulas,
-            use_container_width=True,
-            hide_index=True,
+    if id_cliente_evo:
+        aulas_cliente = fetch_member_activities_history(
+            id_cliente_evo,
+            dias_passado=365,  # ex: 1 ano pra trás
+            dias_futuro=60,    # e 60 dias pra frente
         )
+
+        if aulas_cliente:
+            df_aulas = pd.DataFrame(aulas_cliente)
+            st.dataframe(
+                df_aulas,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("Nenhuma aula encontrada para este cliente no período selecionado.")
     else:
-        st.info("Nenhuma aula encontrada para este cliente no período selecionado.")
-        
+        st.info("Não foi possível identificar o ID deste cliente na EVO.")
+
     st.divider()
     st.subheader("Dados (filtrados)")
     st.dataframe(dfv.reset_index(drop=True), use_container_width=True, height=420)
