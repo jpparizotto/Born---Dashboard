@@ -162,7 +162,8 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
     Busca na EVO todas as aulas relacionadas a um cliente (idMember),
     usando o endpoint /api/v1/activities/schedule.
 
-    Retorna uma lista de dicts já em formato "seguro" (lista vazia se der problema).
+    Retorna uma lista de dicts já em formato "seguro" (lista vazia se der problema),
+    FILTRANDO apenas aulas em que o aluno está/esteve inscrito (status 5, 6, 7 ou 8).
     """
     from datetime import datetime
 
@@ -180,7 +181,6 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
     params = {
         "idMember": id_member,
         "take": take,
-        # queremos tudo que a EVO retornar para esse aluno
         "onlyAvailables": False,
         "showFullWeek": True,
     }
@@ -188,7 +188,6 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
     try:
         data = _get_json_v1("activities/schedule", params=params)
     except Exception:
-        # Em caso de erro na API, devolve vazio pra não quebrar a página
         return []
 
     # Garante que sempre vamos trabalhar com uma lista
@@ -198,7 +197,6 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
         if isinstance(data.get("data"), list):
             items = data["data"]
         else:
-            # tenta achar a primeira lista dentro do dict
             lst = None
             for v in data.values():
                 if isinstance(v, list):
@@ -218,20 +216,45 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
         nome_atividade = it.get("name") or it.get("description") or ""
         area = it.get("area") or ""
         status_code = it.get("status")
-        status_name = it.get("statusName") or ""
+        status_name = (it.get("statusName") or "").strip()
+
+        # ---- FILTRO PRINCIPAL: só manter aulas do aluno ----
+        # Códigos "do aluno": 5 (Cadastrado), 6 (Finalizada),
+        # 7 (Cancelada), 8 (Na Fila)
+        keep = False
+        if isinstance(status_code, int) and status_code in (5, 6, 7, 8):
+            keep = True
+        else:
+            sn = status_name.lower()
+            if sn in (
+                "cadastrado",
+                "registered",
+                "finalizada",
+                "finalized",
+                "cancelada",
+                "cancelled",
+                "na fila",
+                "fila",
+                "waitlist",
+                "wait list",
+            ):
+                keep = True
+
+        if not keep:
+            # pula aulas genéricas da grade (Disponível, Lotada, Restrita, etc.)
+            continue
+        # ----------------------------------------------------
 
         # Normaliza a data (só AAAA-MM-DD)
         dt_iso = None
         if isinstance(activity_date_raw, str):
-            # normalmente vem "2025-11-28T00:00:00"
             dt_str = activity_date_raw.split("T", 1)[0]
             try:
                 dt_iso = datetime.fromisoformat(dt_str).date()
             except Exception:
                 dt_iso = None
 
-        # Classifica em passada x futura (simples)
-        categoria = None
+        # Classifica em passada x futura
         if dt_iso:
             if dt_iso < today:
                 categoria = "Já realizada"
@@ -251,10 +274,8 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
             "Categoria": categoria,
         })
 
-    # Ordena por data + horário
     rows.sort(key=lambda r: (r["Data"], r["Horário"]))
     return rows
-
 
 def fetch_members_v2_all(take=100):
     """
