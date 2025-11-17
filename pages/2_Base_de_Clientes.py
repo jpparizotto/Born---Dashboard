@@ -164,20 +164,14 @@ def fetch_member_activities_history(
 ):
     """
     Busca TODAS as aulas em que o cliente (idMember) esteve inscrito
-    (histórico + futuras) usando a combinação:
+    (histórico + futuras) usando:
       - GET /api/v1/activities/schedule
       - GET /api/v1/activities/schedule/detail
-
-    Estratégia:
-      1. Percorre o período [hoje - dias_passado, hoje + dias_futuro] em
-         blocos semanais (showFullWeek = True) para listar TODAS as sessões.
-      2. Para cada sessão, chama /activities/schedule/detail e verifica
-         se o idMember aparece em enrollments.
-      3. Se aparecer, adiciona a aula à lista do aluno.
 
     Retorna uma lista de dicts pronta para virar DataFrame/tabela.
     """
     from datetime import datetime, date, timedelta
+    import requests
 
     if not id_cliente:
         return []
@@ -189,13 +183,31 @@ def fetch_member_activities_history(
 
     today = date.today()
     start_date = today - timedelta(days=int(dias_passado))
-    end_date = today + timedelta(days=int(dias_futuro))
+    end_date   = today + timedelta(days=int(dias_futuro))
+
+    # helper interno: pega o JSON cru do v1 (sem achatar em lista)
+    def _get_json_v1_raw(path: str, params=None):
+        url = f"{BASE_URL_V1.rstrip('/')}/{path.lstrip('/')}"
+        headers = {"Accept": "application/json", **_auth_header_basic()}
+        try:
+            r = requests.get(
+                url,
+                headers=headers,
+                params=params or {},
+                verify=VERIFY_SSL,
+                timeout=60,
+            )
+            if r.status_code == 204:
+                return {}
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {}
 
     # Vamos buscar a agenda em blocos semanais para não estourar requests
     current = start_date
     step = timedelta(days=7)
 
-    # Para evitar chamadas duplicadas ao detail, usamos (idConfiguration, date) como chave
     schedule_slots = []
     seen_slots = set()
 
@@ -204,19 +216,15 @@ def fetch_member_activities_history(
             "date": current.isoformat(),
             "showFullWeek": True,
             "onlyAvailables": False,
-            # se quiser limitar, pode ajustar o take;
-            # muitos ambientes ignoram esse campo, então deixo sem exagerar
             "take": 500,
         }
 
         try:
             data = _get_json_v1("activities/schedule", params=params)
         except Exception:
-            # se der erro em um bloco, só pula pra próxima semana
             current += step
             continue
 
-        # normaliza para lista
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict) and isinstance(data.get("data"), list):
@@ -237,7 +245,6 @@ def fetch_member_activities_history(
             except Exception:
                 continue
 
-            # filtra pelo intervalo desejado
             if dt_iso < start_date or dt_iso > end_date:
                 continue
 
@@ -256,27 +263,26 @@ def fetch_member_activities_history(
 
         current += step
 
-    # Agora, para cada slot, buscamos o DETAIL e filtramos por enrollments.idMember
     rows = []
 
     for slot in schedule_slots:
         id_conf = slot["idConfiguration"]
-        dt_iso = slot["date"]
-        raw = slot["raw"]
+        dt_iso  = slot["date"]
+        raw     = slot["raw"]
 
         detail_params = {
             "idConfiguration": id_conf,
             "activityDate": dt_iso.isoformat(),
         }
 
-        try:
-            detail = _get_json_v1("activities/schedule/detail", params=detail_params)
-        except Exception:
+        detail = _get_json_v1_raw("activities/schedule/detail", params=detail_params)
+
+        # se por algum motivo veio lista ou vazio, pula
+        if not isinstance(detail, dict):
             continue
 
         enrollments = detail.get("enrollments") or []
 
-        # Procura o aluno na lista de inscritos
         membro_inscrito = None
         for en in enrollments:
             try:
@@ -287,23 +293,20 @@ def fetch_member_activities_history(
                 continue
 
         if not membro_inscrito:
-            # o aluno não está nessa aula, ignora
             continue
 
-        # Monta as informações para a linha
         nome_atividade = (
             detail.get("name")
             or raw.get("name")
             or detail.get("title")
             or ""
         )
-        area = detail.get("area") or raw.get("area") or ""
+        area       = detail.get("area") or raw.get("area") or ""
         start_time = detail.get("startTime") or raw.get("startTime") or ""
-        end_time = detail.get("endTime") or raw.get("endTime") or ""
-        status_aula = detail.get("statusName") or str(detail.get("status") or "")
+        end_time   = detail.get("endTime") or raw.get("endTime") or ""
+        status_aula  = detail.get("statusName") or str(detail.get("status") or "")
         status_aluno = membro_inscrito.get("status")
 
-        # Categoria: Passada / Hoje / Futura
         if dt_iso < today:
             categoria = "Já realizada"
         elif dt_iso == today:
@@ -323,10 +326,8 @@ def fetch_member_activities_history(
             }
         )
 
-    # Ordena bonitinho
     rows.sort(key=lambda r: (r["Data"], r["Horário"]))
     return rows
-
 
 def fetch_members_v2_all(take=100):
     """
@@ -772,32 +773,6 @@ if selected_row is not None:
     id_cliente_evo = selected_row.get("IdCliente", "")
 
     st.subheader("📅 Aulas do cliente (histórico + futuras)")
-
-    if id_cliente_evo:
-        aulas_cliente = fetch_member_activities_history(
-            id_cliente_evo,
-            dias_passado=365,  # ex: 1 ano pra trás
-            dias_futuro=60,    # e 60 dias pra frente
-        )
-
-        if aulas_cliente:
-            df_aulas = pd.DataFrame(aulas_cliente)
-            st.dataframe(
-                df_aulas,
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("Nenhuma aula encontrada para este cliente no período selecionado.")
-    else:
-        st.info("Não foi possível identificar o ID deste cliente na EVO.")
-
-    st.divider()
-    st.subheader("Dados (filtrados)")
-    st.dataframe(dfv.reset_index(drop=True), use_container_width=True, height=420)
-
-    # IMPORTANTE: não desenha os gráficos quando um cliente está selecionado
-    st.stop()
 
 colE1, colE2 = st.columns(2)
 with colE1:
