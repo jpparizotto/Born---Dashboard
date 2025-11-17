@@ -1,0 +1,30 @@
+name: Daily Client Snapshot
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 22h BRT
+  workflow_dispatch: {}     # permite rodar manualmente
+
+jobs:
+  run_snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run snapshot job
+        env:
+          EVO_USER: ${{ secrets.EVO_USER }}
+          EVO_TOKEN: ${{ secrets.EVO_TOKEN }}
+        run: |
+          python jobs_snapshot_clientes.py
