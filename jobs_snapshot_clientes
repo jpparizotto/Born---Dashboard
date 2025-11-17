@@ -1,0 +1,12 @@
+# jobs_snapshot_clientes.py
+from pages import _2_Base_de_Clientes as base
+from db import register_daily_client_count
+from pages._2_Base_de_Clientes import fetch_members_v2_all, _normalize_members_basic
+
+def run():
+    raw = fetch_members_v2_all(take=100)
+    df = _normalize_members_basic(raw)
+    register_daily_client_count(len(df))
+
+if __name__ == "__main__":
+    run()
