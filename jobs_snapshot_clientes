@@ -1,16 +1,97 @@
+# jobs_snapshot_clientes.py
+import os
+import base64
 from datetime import date
+import requests
+
 from db import register_daily_client_count
-from pages._2_Base_de_Clientes import fetch_members_v2_all, _normalize_members_basic
+
+BASE_URL_V2 = "https://evo-integracao-api.w12app.com.br/api/v2"
+VERIFY_SSL = True
+
+EVO_USER = os.environ.get("EVO_USER", "")
+EVO_TOKEN = os.environ.get("EVO_TOKEN", "")
+
+
+def _auth_header_basic():
+    if not EVO_USER or not EVO_TOKEN:
+        raise RuntimeError("EVO_USER ou EVO_TOKEN não definidos nas variáveis de ambiente.")
+    auth_str = f"{EVO_USER}:{EVO_TOKEN}"
+    b64 = base64.b64encode(auth_str.encode()).decode()
+    return {"Authorization": f"Basic {b64}"}
+
+
+def _get_json(url_base, path, params=None):
+    url = f"{url_base.rstrip('/')}/{path.lstrip('/')}"
+    headers = {"Accept": "application/json", **_auth_header_basic()}
+    params = params or {}
+
+    r = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL, timeout=60)
+    r.raise_for_status()
+    try:
+        data = r.json()
+    except Exception:
+        return []
+
+    if isinstance(data, dict):
+        for k in ("data", "items", "results", "list", "rows"):
+            if k in data and isinstance(data[k], list):
+                return data[k]
+    return data if isinstance(data, list) else []
+
+
+def fetch_members_v2_all(take=100):
+    """
+    Mesma lógica da página Base de Clientes: pagina /members até acabar.
+    """
+    take = min(max(1, int(take)), 100)
+    skip = 0
+    all_rows = []
+    while True:
+        params = {
+            "take": take,
+            "skip": skip,
+            "showMemberships": "true",
+            "includeAddress": "true",
+            "includeContacts": "true",
+        }
+        batch = _get_json(BASE_URL_V2, "members", params=params)
+        if not batch:
+            break
+        all_rows.extend(batch)
+        skip += take
+    return all_rows
+
+
+def count_unique_clients(raw_list):
+    """
+    Conta clientes únicos pela mesma lógica de Id usada no dashboard.
+    """
+    seen = set()
+    for c in raw_list:
+        cid = (
+            c.get("idMember")
+            or c.get("memberId")
+            or c.get("id")
+            or c.get("Id")
+        )
+        if cid is None:
+            continue
+        seen.add(str(cid))
+    return len(seen)
+
 
 def run():
-    print("Buscando clientes do EVO...")
+    print("Iniciando snapshot diário de clientes...")
     raw = fetch_members_v2_all(take=100)
-    df = _normalize_members_basic(raw)
-    total = len(df)
+    total = count_unique_clients(raw)
+    print(f"Total de clientes únicos hoje: {total}")
 
-    print(f"Total de clientes hoje: {total}")
     register_daily_client_count(total)
+    print("Snapshot registrado com sucesso.")
+
 
 if __name__ == "__main__":
     run()
+
 
