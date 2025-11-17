@@ -15,7 +15,8 @@ import base64
 from time import sleep
 import re
 
-from db import sync_clients_from_df
+from db import sync_clients_from_df, register_daily_client_count, load_daily_client_counts
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -598,7 +599,12 @@ if "_clientes_df" not in st.session_state:
     st.session_state["_clientes_df"] = _normalize_members_basic_cached(raw)
 
 dfc = st.session_state["_clientes_df"].copy()
-
+# Registra snapshot diário da quantidade de clientes
+try:
+    register_daily_client_count(len(dfc))
+except Exception as e:
+    st.warning("Não foi possível registrar o snapshot diário de clientes.")
+    st.exception(e)
 # ──────────────────────────────────────────────────────────────────────────────
 # Sincroniza clientes + histórico de nível com o banco
 # ──────────────────────────────────────────────────────────────────────────────
