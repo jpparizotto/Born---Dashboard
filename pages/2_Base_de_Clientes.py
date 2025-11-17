@@ -159,8 +159,8 @@ def _get_json_v1(path, params=None):
 @st.cache_data(show_spinner=False, ttl=300)
 def fetch_member_activities_history(
     id_cliente: str,
-    dias_passado: int = 90,
-    dias_futuro: int = 30,
+    dias_passado: int = 30,
+    dias_futuro: int = 15,
 ):
     """
     Busca TODAS as aulas em que o cliente (idMember) esteve inscrito
