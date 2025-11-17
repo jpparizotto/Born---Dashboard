@@ -156,6 +156,105 @@ def _cached_get_v2(path: str, params_tuple):
 def _get_json_v1(path, params=None):
     return _get_json(BASE_URL_V1, path, params=params)
 
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
+    """
+    Busca na EVO todas as aulas relacionadas a um cliente (idMember),
+    usando o endpoint /api/v1/activities/schedule.
+
+    Retorna uma lista de dicts já em formato "seguro" (lista vazia se der problema).
+    """
+    from datetime import datetime
+
+    if not id_cliente:
+        return []
+
+    try:
+        id_member = int(str(id_cliente))
+    except Exception:
+        return []
+
+    # Limita o 'take' entre 1 e 100 (padrão de paginação da EVO)
+    take = max(1, min(int(take), 100))
+
+    params = {
+        "idMember": id_member,
+        "take": take,
+        # queremos tudo que a EVO retornar para esse aluno
+        "onlyAvailables": False,
+        "showFullWeek": True,
+    }
+
+    try:
+        data = _get_json_v1("activities/schedule", params=params)
+    except Exception:
+        # Em caso de erro na API, devolve vazio pra não quebrar a página
+        return []
+
+    # Garante que sempre vamos trabalhar com uma lista
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            items = data["data"]
+        else:
+            # tenta achar a primeira lista dentro do dict
+            lst = None
+            for v in data.values():
+                if isinstance(v, list):
+                    lst = v
+                    break
+            items = lst or []
+    else:
+        items = []
+
+    rows = []
+    today = datetime.today().date()
+
+    for it in items:
+        activity_date_raw = it.get("activityDate")
+        start = it.get("startTime")
+        end = it.get("endTime")
+        nome_atividade = it.get("name") or it.get("description") or ""
+        area = it.get("area") or ""
+        status_code = it.get("status")
+        status_name = it.get("statusName") or ""
+
+        # Normaliza a data (só AAAA-MM-DD)
+        dt_iso = None
+        if isinstance(activity_date_raw, str):
+            # normalmente vem "2025-11-28T00:00:00"
+            dt_str = activity_date_raw.split("T", 1)[0]
+            try:
+                dt_iso = datetime.fromisoformat(dt_str).date()
+            except Exception:
+                dt_iso = None
+
+        # Classifica em passada x futura (simples)
+        categoria = None
+        if dt_iso:
+            if dt_iso < today:
+                categoria = "Já realizada"
+            elif dt_iso == today:
+                categoria = "Hoje"
+            else:
+                categoria = "Futura"
+        else:
+            categoria = ""
+
+        rows.append({
+            "Data": dt_iso.isoformat() if dt_iso else "",
+            "Horário": f"{start} - {end}" if start or end else "",
+            "Atividade": nome_atividade,
+            "Área": area,
+            "Status": status_name or str(status_code or ""),
+            "Categoria": categoria,
+        })
+
+    # Ordena por data + horário
+    rows.sort(key=lambda r: (r["Data"], r["Horário"]))
+    return rows
+
 
 def fetch_members_v2_all(take=100):
     """
@@ -561,6 +660,69 @@ if termo:
 
 dfv = dfc[mask].copy()
 st.caption(f"Filtrados: {len(dfv)}")
+
+# ─────────────────────────────────────────────────────────────
+# DETALHE DE UM CLIENTE ESPECÍFICO (substitui os gráficos)
+# ─────────────────────────────────────────────────────────────
+
+selected_row = None
+if not dfv.empty:
+    nomes_opcoes = ["(Nenhum)"] + sorted(dfv["Nome"].dropna().unique().tolist())
+    escolha_nome = st.selectbox(
+        "🔍 Ver detalhes de um cliente específico (opcional)",
+        nomes_opcoes,
+        index=0,
+    )
+
+    if escolha_nome != "(Nenhum)":
+        # pega a primeira ocorrência do nome escolhido
+        selected_row = dfv[dfv["Nome"] == escolha_nome].iloc[0]
+
+if selected_row is not None:
+    st.subheader("👤 Detalhes do cliente")
+
+    info_dict = {
+        "Nome": selected_row.get("Nome", ""),
+        "Idade": selected_row.get("Idade", ""),
+        "Sexo": selected_row.get("Sexo", ""),
+        "Bairro": selected_row.get("Bairro", ""),
+        "Telefone": selected_row.get("Telefone", ""),
+        "E-mail": selected_row.get("Email", ""),
+        "ID Cliente (EVO)": selected_row.get("IdCliente", ""),
+    }
+
+    df_info = pd.DataFrame(
+        {"Campo": list(info_dict.keys()), "Valor": list(info_dict.values())}
+    )
+    st.table(df_info)
+
+    st.subheader("📅 Aulas do cliente (histórico + futuras)")
+
+    aulas = fetch_member_activities_schedule(selected_row.get("IdCliente", ""))
+
+    if not aulas:
+        st.info("Nenhuma aula encontrada para este cliente na API da EVO (ou falha na consulta).")
+    else:
+        df_aulas = pd.DataFrame(aulas)
+
+        # Se quiser separar em duas tabelas:
+        df_futuras = df_aulas[df_aulas["Categoria"].isin(["Hoje", "Futura"])]
+        df_passadas = df_aulas[df_aulas["Categoria"] == "Já realizada"]
+
+        if not df_futuras.empty:
+            st.markdown("#### Próximas aulas")
+            st.dataframe(df_futuras.reset_index(drop=True), use_container_width=True)
+
+        if not df_passadas.empty:
+            st.markdown("#### Aulas já realizadas")
+            st.dataframe(df_passadas.reset_index(drop=True), use_container_width=True)
+
+    st.divider()
+    st.subheader("Dados (filtrados)")
+    st.dataframe(dfv.reset_index(drop=True), use_container_width=True, height=420)
+
+    # IMPORTANTE: não desenha os gráficos quando um cliente está selecionado
+    st.stop()
 
 colE1, colE2 = st.columns(2)
 with colE1:
