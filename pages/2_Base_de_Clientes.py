@@ -302,15 +302,33 @@ def _normalize_members_basic(raw_list):
         email = _clean_email(c.get("email") or "")
         tel = _clean_phone(c.get("phone") or c.get("mobile") or c.get("cellphone") or "")
 
+        # Também lê telefones/e-mails da lista de contatos vinda da EVO
         for ct in (c.get("contacts") or []):
-            t = str(ct.get("type") or "").upper()
-            v = str(ct.get("value") or ct.get("description") or "").strip()
+            # Em alguns exports o campo vem como "type", em outros como "contactType"
+            raw_type = ct.get("type") or ct.get("contactType") or ""
+            t = str(raw_type).upper()
+
+            # Número / e-mail podem vir em "value" ou "description"
+            v = ct.get("value") or ct.get("description") or ""
+            v = str(v).strip()
             if not v:
                 continue
+
+            # DDI pode vir separado (ex: "55")
+            ddi = str(ct.get("ddi") or "").strip()
+
+            # E-mail
             if not email and t in ("EMAIL", "E-MAIL", "MAIL"):
                 email = _clean_email(v)
+
+            # Celular/telefone
             if not tel and t in ("MOBILE", "CELULAR", "CELLPHONE", "PHONE", "TELEFONE"):
-                tel = _clean_phone(v)
+                num = v
+                # Se tiver DDI separado, junta antes de limpar
+                if ddi and not num.startswith("+"):
+                    num = ddi + num
+                tel = _clean_phone(num)
+
 
         street, number, compl, bairro, cidade, uf, cep = _extract_address_any(c)
 
