@@ -831,17 +831,22 @@ if "Idade" in dfv.columns and dfv["Idade"].notna().any():
 
 st.divider()
 cols2 = st.columns(2)
+# TABELA DE BAIRROS (substitui o gráfico)
 if "Bairro" in dfv.columns and not dfv.empty:
     with cols2[0]:
-        top_bairro = (
-            dfv.groupby("Bairro", as_index=False).size()
-            .rename(columns={"size": "Clientes"})
-            .sort_values("Clientes", ascending=False)
-            .head(20)
+        df_bairros = (
+            dfv.groupby("Bairro", as_index=False)
+               .size()
+               .rename(columns={"size": "Clientes"})
+               .sort_values("Clientes", ascending=False)
         )
-        fig = px.bar(top_bairro, x="Bairro", y="Clientes", title="Top bairros (20)")
-        fig.update_layout(xaxis_tickangle=-35)
-        st.plotly_chart(fig, use_container_width=True)
+        total_clientes_bairros = df_bairros["Clientes"].sum()
+        df_bairros["% do total"] = (
+            df_bairros["Clientes"] / total_clientes_bairros * 100
+        ).round(1)
+
+        st.subheader("Bairros (todos)")
+        st.dataframe(df_bairros, use_container_width=True)
 
 if "Cidade" in dfv.columns and not dfv.empty:
     with cols2[1]:
