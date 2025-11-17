@@ -241,3 +241,89 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
     conn.commit()
     conn.close()
     return processed
+
+# ---------------------------------------------------------------------------
+# Snapshot diário de quantidade de clientes
+# ---------------------------------------------------------------------------
+
+def _ensure_daily_clients_table():
+    """Garante a existência da tabela de histórico diário."""
+    init_db_if_needed()
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_clients (
+            data TEXT PRIMARY KEY,
+            total_clientes INTEGER NOT NULL,
+            novos_clientes INTEGER NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def register_daily_client_count(total_clientes: int) -> None:
+    """
+    Registra o total de clientes do dia (se ainda não houver registro).
+
+    - data: hoje
+    - total_clientes: total atual
+    - novos_clientes: diferença em relação ao último snapshot anterior
+    """
+    _ensure_daily_clients_table()
+    conn = get_connection()
+    cur = conn.cursor()
+
+    hoje = date.today().isoformat()
+
+    # já tem registro pra hoje?
+    cur.execute("SELECT 1 FROM daily_clients WHERE data = ?;", (hoje,))
+    if cur.fetchone():
+        conn.close()
+        return  # já registrado hoje, não faz nada
+
+    # pega o último snapshot anterior (se houver)
+    cur.execute(
+        "SELECT data, total_clientes FROM daily_clients ORDER BY data DESC LIMIT 1;"
+    )
+    row = cur.fetchone()
+    last_total = row[1] if row else 0
+
+    novos = max(int(total_clientes) - int(last_total), 0)
+
+    cur.execute(
+        """
+        INSERT INTO daily_clients (data, total_clientes, novos_clientes)
+        VALUES (?, ?, ?);
+        """,
+        (hoje, int(total_clientes), int(novos)),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def load_daily_client_counts() -> pd.DataFrame:
+    """
+    Retorna DataFrame com:
+      - data
+      - total_clientes
+      - novos_clientes
+    ordenado por data.
+    """
+    _ensure_daily_clients_table()
+    conn = get_connection()
+    df = pd.read_sql_query(
+        """
+        SELECT data, total_clientes, novos_clientes
+        FROM daily_clients
+        ORDER BY data;
+        """,
+        conn,
+        parse_dates=["data"],
+    )
+    conn.close()
+    return df
+
