@@ -739,6 +739,68 @@ if termo:
 
 dfv = dfc[mask].copy()
 st.caption(f"Filtrados: {len(dfv)}")
+# ─────────────────────────────────────────────────────────────
+# HISTÓRICO DIÁRIO DE CLIENTES
+# ─────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("📈 Evolução diária de clientes")
+
+try:
+    df_daily = load_daily_client_counts()
+except Exception as e:
+    st.error("Não foi possível carregar o histórico diário de clientes.")
+    st.exception(e)
+    df_daily = None
+
+if df_daily is not None and not df_daily.empty:
+    df_daily = df_daily.copy()
+    df_daily["data"] = pd.to_datetime(df_daily["data"]).dt.date
+
+    c_hist1, c_hist2 = st.columns(2)
+
+    # 1) Número de clientes dia a dia (absoluto)
+    with c_hist1:
+        fig_total = px.line(
+            df_daily,
+            x="data",
+            y="total_clientes",
+            markers=True,
+            title="Total de clientes por dia",
+        )
+        fig_total.update_layout(
+            xaxis_title="Data",
+            yaxis_title="Total de clientes",
+        )
+        st.plotly_chart(fig_total, use_container_width=True)
+
+    # 2) Variação diária (novos clientes)
+    with c_hist2:
+        fig_var = px.bar(
+            df_daily,
+            x="data",
+            y="novos_clientes",
+            title="Variação diária (novos clientes)",
+        )
+        fig_var.update_layout(
+            xaxis_title="Data",
+            yaxis_title="Novos clientes no dia",
+        )
+        st.plotly_chart(fig_var, use_container_width=True)
+
+    # Tabela abaixo (opcional)
+    st.caption("Histórico bruto")
+    st.dataframe(
+        df_daily.rename(
+            columns={
+                "data": "Data",
+                "total_clientes": "Total de clientes",
+                "novos_clientes": "Novos no dia",
+            }
+        ),
+        use_container_width=True,
+    )
+else:
+    st.info("Ainda não há histórico diário de clientes registrado.")
 
 # ─────────────────────────────────────────────────────────────
 # DETALHE DE UM CLIENTE ESPECÍFICO (substitui os gráficos)
