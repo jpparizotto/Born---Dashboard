@@ -1,12 +1,16 @@
-# jobs_snapshot_clientes.py
-from pages import _2_Base_de_Clientes as base
+from datetime import date
 from db import register_daily_client_count
 from pages._2_Base_de_Clientes import fetch_members_v2_all, _normalize_members_basic
 
 def run():
+    print("Buscando clientes do EVO...")
     raw = fetch_members_v2_all(take=100)
     df = _normalize_members_basic(raw)
-    register_daily_client_count(len(df))
+    total = len(df)
+
+    print(f"Total de clientes hoje: {total}")
+    register_daily_client_count(total)
 
 if __name__ == "__main__":
     run()
+
