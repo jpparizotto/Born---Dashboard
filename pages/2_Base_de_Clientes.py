@@ -820,9 +820,29 @@ with colE2:
 gcols = st.columns(2)
 if "Sexo" in dfv.columns and not dfv.empty:
     with gcols[0]:
-        cont = dfv.groupby("Sexo", as_index=False).size().rename(columns={"size": "Clientes"})
-        fig = px.bar(cont, x="Sexo", y="Clientes", title="Clientes por sexo")
+        cont = (
+            dfv.groupby("Sexo", as_index=False)
+               .size()
+               .rename(columns={"size": "Clientes"})
+               .sort_values("Clientes", ascending=False)
+        )
+
+        fig = px.pie(
+            cont,
+            names="Sexo",
+            values="Clientes",
+            title="Clientes por sexo",
+            hole=0,  # pizza tradicional
+        )
+
+        # MOSTRAR Nº BRUTO DENTRO DA FATIA
+        fig.update_traces(
+            textposition="inside",
+            textinfo="label+value",  # mostra: Sexo + Número bruto
+        )
+
         st.plotly_chart(fig, use_container_width=True)
+
 
 if "Idade" in dfv.columns and dfv["Idade"].notna().any():
     with gcols[1]:
