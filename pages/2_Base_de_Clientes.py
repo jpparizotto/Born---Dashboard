@@ -844,6 +844,7 @@ if "Bairro" in dfv.columns and not dfv.empty:
         df_bairros["% do total"] = (
             df_bairros["Clientes"] / total_clientes_bairros * 100
         ).round(1)
+        df_bairros["% acumulado"] = df_bairros["% do total"].cumsum().round(1)
 
         st.subheader("Bairros (todos)")
         st.dataframe(df_bairros, use_container_width=True)
@@ -860,9 +861,11 @@ if "Cidade" in dfv.columns and not dfv.empty:
         df_cidades["% do total"] = (
             df_cidades["Clientes"] / total_clientes_cidades * 100
         ).round(1)
+        df_cidades["% acumulado"] = df_cidades["% do total"].cumsum().round(1)
 
         st.subheader("Cidades (todas)")
         st.dataframe(df_cidades, use_container_width=True)
+
 
 st.divider()
 st.subheader("Dados (filtrados)")
