@@ -119,16 +119,17 @@ with tab_visao:
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
-
-    # --- Tabela com todas as mudanças recentes (level_history) ---
-    dias = 10  # se quiser, podemos transformar em input depois
+    
+    dias = 10  # se quiser, dá pra virar input depois
     cutoff = (date.today() - timedelta(days=dias)).isoformat()
-
+    
+    # 1) Busca TODO o histórico (precisamos ver o nível anterior de cada aluno)
     try:
         conn = get_connection()
-        df_changes = pd.read_sql_query(
+        df_all = pd.read_sql_query(
             """
             SELECT
+                lh.id,
                 lh.data,
                 lh.nivel,
                 lh.nivel_ordem,
@@ -138,14 +139,56 @@ with tab_visao:
             FROM level_history AS lh
             LEFT JOIN clients AS c
                    ON c.evo_id = lh.evo_id
-            WHERE lh.data >= ?
-            ORDER BY lh.data DESC, lh.id DESC;
+            ORDER BY lh.evo_id, lh.data, lh.id;
             """,
             conn,
-            params=[cutoff],
         )
     finally:
         conn.close()
+    
+    if df_all.empty:
+        st.info("Ainda não há nenhum registro em level_history.")
+    else:
+        # 2) Converte data e garante ordenação
+        df_all["data_dt"] = pd.to_datetime(df_all["data"], errors="coerce")
+        df_all = df_all.sort_values(["evo_id", "data_dt", "id"])
+    
+        # 3) Compara com o nível anterior de cada aluno
+        df_all["nivel_prev"] = df_all.groupby("evo_id")["nivel"].shift(1)
+        df_all["is_change"] = df_all["nivel_prev"].notna() & (df_all["nivel"] != df_all["nivel_prev"])
+    
+        # 4) Mantém só mudanças reais nos últimos X dias
+        df_changes = df_all[df_all["is_change"] & (df_all["data"] >= cutoff)]
+    
+        if df_changes.empty:
+            st.info(f"Nenhuma mudança de nível registrada nos últimos {dias} dias.")
+        else:
+            st.caption(f"Mostrando apenas mudanças reais de nível a partir de {cutoff} (inclusive).")
+    
+            colg1, colg2 = st.columns(2)
+            with colg1:
+                st.metric("Total de mudanças no período", int(len(df_changes)))
+            with colg2:
+                st.metric("Clientes diferentes afetados", df_changes["evo_id"].nunique())
+    
+            # Ordena do mais recente pro mais antigo só para exibir
+            df_changes = df_changes.sort_values(["data_dt", "evo_id"], ascending=[False, True])
+    
+            # Tabela enxuta
+            df_show = df_changes[["data", "nome_limpo", "evo_id", "nivel", "nivel_prev", "origem"]].copy()
+            df_show.rename(
+                columns={
+                    "data": "Data",
+                    "nome_limpo": "Cliente",
+                    "evo_id": "EVO ID",
+                    "nivel": "Nível novo",
+                    "nivel_prev": "Nível anterior",
+                    "origem": "Origem",
+                },
+                inplace=True,
+            )
+            st.dataframe(df_show, use_container_width=True, height=400)
+
 
     if df_changes.empty:
         st.info(f"Nenhuma mudança de nível registrada nos últimos {dias} dias.")
