@@ -157,15 +157,27 @@ def _get_json_v1(path, params=None):
     return _get_json(BASE_URL_V1, path, params=params)
 
 @st.cache_data(show_spinner=False, ttl=300)
-def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
+def fetch_member_activities_history(
+    id_cliente: str,
+    dias_passado: int = 90,
+    dias_futuro: int = 30,
+):
     """
-    Busca na EVO todas as aulas relacionadas a um cliente (idMember),
-    usando o endpoint /api/v1/activities/schedule.
+    Busca TODAS as aulas em que o cliente (idMember) esteve inscrito
+    (histórico + futuras) usando a combinação:
+      - GET /api/v1/activities/schedule
+      - GET /api/v1/activities/schedule/detail
 
-    Retorna uma lista de dicts já em formato "seguro" (lista vazia se der problema),
-    FILTRANDO apenas aulas em que o aluno está/esteve inscrito (status 5, 6, 7 ou 8).
+    Estratégia:
+      1. Percorre o período [hoje - dias_passado, hoje + dias_futuro] em
+         blocos semanais (showFullWeek = True) para listar TODAS as sessões.
+      2. Para cada sessão, chama /activities/schedule/detail e verifica
+         se o idMember aparece em enrollments.
+      3. Se aparecer, adiciona a aula à lista do aluno.
+
+    Retorna uma lista de dicts pronta para virar DataFrame/tabela.
     """
-    from datetime import datetime
+    from datetime import datetime, date, timedelta
 
     if not id_cliente:
         return []
@@ -175,107 +187,146 @@ def fetch_member_activities_schedule(id_cliente: str, take: int = 100):
     except Exception:
         return []
 
-    # Limita o 'take' entre 1 e 100 (padrão de paginação da EVO)
-    take = max(1, min(int(take), 100))
+    today = date.today()
+    start_date = today - timedelta(days=int(dias_passado))
+    end_date = today + timedelta(days=int(dias_futuro))
 
-    params = {
-        "idMember": id_member,
-        "take": take,
-        "onlyAvailables": False,
-        "showFullWeek": True,
-    }
+    # Vamos buscar a agenda em blocos semanais para não estourar requests
+    current = start_date
+    step = timedelta(days=7)
 
-    try:
-        data = _get_json_v1("activities/schedule", params=params)
-    except Exception:
-        return []
+    # Para evitar chamadas duplicadas ao detail, usamos (idConfiguration, date) como chave
+    schedule_slots = []
+    seen_slots = set()
 
-    # Garante que sempre vamos trabalhar com uma lista
-    if isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        if isinstance(data.get("data"), list):
+    while current <= end_date:
+        params = {
+            "date": current.isoformat(),
+            "showFullWeek": True,
+            "onlyAvailables": False,
+            # se quiser limitar, pode ajustar o take;
+            # muitos ambientes ignoram esse campo, então deixo sem exagerar
+            "take": 500,
+        }
+
+        try:
+            data = _get_json_v1("activities/schedule", params=params)
+        except Exception:
+            # se der erro em um bloco, só pula pra próxima semana
+            current += step
+            continue
+
+        # normaliza para lista
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict) and isinstance(data.get("data"), list):
             items = data["data"]
         else:
-            lst = None
-            for v in data.values():
-                if isinstance(v, list):
-                    lst = v
-                    break
-            items = lst or []
-    else:
-        items = []
+            items = []
 
-    rows = []
-    today = datetime.today().date()
+        for it in items:
+            activity_date_raw = it.get("activityDate")
+            id_conf = it.get("idConfiguration")
 
-    for it in items:
-        activity_date_raw = it.get("activityDate")
-        start = it.get("startTime")
-        end = it.get("endTime")
-        nome_atividade = it.get("name") or it.get("description") or ""
-        area = it.get("area") or ""
-        status_code = it.get("status")
-        status_name = (it.get("statusName") or "").strip()
+            if not activity_date_raw or not id_conf:
+                continue
 
-        # ---- FILTRO PRINCIPAL: só manter aulas do aluno ----
-        # Códigos "do aluno": 5 (Cadastrado), 6 (Finalizada),
-        # 7 (Cancelada), 8 (Na Fila)
-        keep = False
-        if isinstance(status_code, int) and status_code in (5, 6, 7, 8):
-            keep = True
-        else:
-            sn = status_name.lower()
-            if sn in (
-                "cadastrado",
-                "registered",
-                "finalizada",
-                "finalized",
-                "cancelada",
-                "cancelled",
-                "na fila",
-                "fila",
-                "waitlist",
-                "wait list",
-            ):
-                keep = True
-
-        if not keep:
-            # pula aulas genéricas da grade (Disponível, Lotada, Restrita, etc.)
-            continue
-        # ----------------------------------------------------
-
-        # Normaliza a data (só AAAA-MM-DD)
-        dt_iso = None
-        if isinstance(activity_date_raw, str):
-            dt_str = activity_date_raw.split("T", 1)[0]
+            dt_str = str(activity_date_raw).split("T", 1)[0]
             try:
                 dt_iso = datetime.fromisoformat(dt_str).date()
             except Exception:
-                dt_iso = None
+                continue
 
-        # Classifica em passada x futura
-        if dt_iso:
-            if dt_iso < today:
-                categoria = "Já realizada"
-            elif dt_iso == today:
-                categoria = "Hoje"
-            else:
-                categoria = "Futura"
+            # filtra pelo intervalo desejado
+            if dt_iso < start_date or dt_iso > end_date:
+                continue
+
+            slot_key = (int(id_conf), dt_iso.isoformat())
+            if slot_key in seen_slots:
+                continue
+            seen_slots.add(slot_key)
+
+            schedule_slots.append(
+                {
+                    "idConfiguration": int(id_conf),
+                    "date": dt_iso,
+                    "raw": it,
+                }
+            )
+
+        current += step
+
+    # Agora, para cada slot, buscamos o DETAIL e filtramos por enrollments.idMember
+    rows = []
+
+    for slot in schedule_slots:
+        id_conf = slot["idConfiguration"]
+        dt_iso = slot["date"]
+        raw = slot["raw"]
+
+        detail_params = {
+            "idConfiguration": id_conf,
+            "activityDate": dt_iso.isoformat(),
+        }
+
+        try:
+            detail = _get_json_v1("activities/schedule/detail", params=detail_params)
+        except Exception:
+            continue
+
+        enrollments = detail.get("enrollments") or []
+
+        # Procura o aluno na lista de inscritos
+        membro_inscrito = None
+        for en in enrollments:
+            try:
+                if int(en.get("idMember") or 0) == id_member:
+                    membro_inscrito = en
+                    break
+            except Exception:
+                continue
+
+        if not membro_inscrito:
+            # o aluno não está nessa aula, ignora
+            continue
+
+        # Monta as informações para a linha
+        nome_atividade = (
+            detail.get("name")
+            or raw.get("name")
+            or detail.get("title")
+            or ""
+        )
+        area = detail.get("area") or raw.get("area") or ""
+        start_time = detail.get("startTime") or raw.get("startTime") or ""
+        end_time = detail.get("endTime") or raw.get("endTime") or ""
+        status_aula = detail.get("statusName") or str(detail.get("status") or "")
+        status_aluno = membro_inscrito.get("status")
+
+        # Categoria: Passada / Hoje / Futura
+        if dt_iso < today:
+            categoria = "Já realizada"
+        elif dt_iso == today:
+            categoria = "Hoje"
         else:
-            categoria = ""
+            categoria = "Futura"
 
-        rows.append({
-            "Data": dt_iso.isoformat() if dt_iso else "",
-            "Horário": f"{start} - {end}" if start or end else "",
-            "Atividade": nome_atividade,
-            "Área": area,
-            "Status": status_name or str(status_code or ""),
-            "Categoria": categoria,
-        })
+        rows.append(
+            {
+                "Data": dt_iso.isoformat(),
+                "Horário": f"{start_time} - {end_time}" if (start_time or end_time) else "",
+                "Atividade": nome_atividade,
+                "Área": area,
+                "Status aula": status_aula,
+                "Status aluno (código)": status_aluno,
+                "Categoria": categoria,
+            }
+        )
 
+    # Ordena bonitinho
     rows.sort(key=lambda r: (r["Data"], r["Horário"]))
     return rows
+
 
 def fetch_members_v2_all(take=100):
     """
@@ -719,25 +770,24 @@ if selected_row is not None:
 
     st.subheader("📅 Aulas do cliente (histórico + futuras)")
 
-    aulas = fetch_member_activities_schedule(selected_row.get("IdCliente", ""))
+if id_cliente_evo:
+    aulas_cliente = fetch_member_activities_history(
+        id_cliente_evo,
+        dias_passado=365,  # por exemplo, 1 ano pra trás
+        dias_futuro=60,    # e 60 dias pra frente
+    )
 
-    if not aulas:
-        st.info("Nenhuma aula encontrada para este cliente na API da EVO (ou falha na consulta).")
+    if aulas_cliente:
+        st.subheader("Aulas do cliente (histórico + futuras)")
+        df_aulas = pd.DataFrame(aulas_cliente)
+        st.dataframe(
+            df_aulas,
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
-        df_aulas = pd.DataFrame(aulas)
-
-        # Se quiser separar em duas tabelas:
-        df_futuras = df_aulas[df_aulas["Categoria"].isin(["Hoje", "Futura"])]
-        df_passadas = df_aulas[df_aulas["Categoria"] == "Já realizada"]
-
-        if not df_futuras.empty:
-            st.markdown("#### Próximas aulas")
-            st.dataframe(df_futuras.reset_index(drop=True), use_container_width=True)
-
-        if not df_passadas.empty:
-            st.markdown("#### Aulas já realizadas")
-            st.dataframe(df_passadas.reset_index(drop=True), use_container_width=True)
-
+        st.info("Nenhuma aula encontrada para este cliente no período selecionado.")
+        
     st.divider()
     st.subheader("Dados (filtrados)")
     st.dataframe(dfv.reset_index(drop=True), use_container_width=True, height=420)
