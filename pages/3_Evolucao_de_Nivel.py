@@ -2,6 +2,7 @@
 # pages/3_Evolucao_de_Nivel.py
 
 import sqlite3
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -11,13 +12,24 @@ import plotly.express as px
 from db import get_connection, init_db_if_needed
 
 st.set_page_config(page_title="Evolução de Nível por Cliente", page_icon="📈", layout="wide")
-st.title("📈 Evolução de Nível por Cliente")
+st.title("📈 Evolução de Nível")
 
 # Garante que as tabelas existam
 init_db_if_needed()
 
 # ---------------------------------------------------------------------------
-# Carrega lista de clientes do banco
+# Constantes de níveis
+# ---------------------------------------------------------------------------
+LEVELS = [
+    "1A", "1B", "1C", "1D",
+    "2A", "2B", "2C", "2D",
+    "3A", "3B", "3C", "3D",
+    "4A", "4B", "4C", "4D",
+]
+LEVEL_INDEX = {lvl: i for i, lvl in enumerate(LEVELS)}  # 1A=0, 1B=1, ...
+
+# ---------------------------------------------------------------------------
+# Carrega lista de clientes do banco (usado na aba "Por cliente")
 # ---------------------------------------------------------------------------
 try:
     conn = get_connection()
@@ -37,131 +49,256 @@ finally:
     conn.close()
 
 if df_clients.empty:
-    st.info("Nenhum cliente encontrado no banco. Vá primeiro em **'Base de Clientes'** → sincronize com o EVO e depois clique no botão **'Sincronizar clientes com banco interno'**.")
+    st.info(
+        "Nenhum cliente encontrado no banco.\n\n"
+        "Vá primeiro em **'Base de Clientes'** → sincronize com o EVO e depois clique no botão "
+        "**'Sincronizar clientes com banco interno'**."
+    )
     st.stop()
 
-# Nome amigável para o select
+# Nome amigável para o select na aba "Por cliente"
 df_clients["label"] = df_clients.apply(
     lambda r: f"{r['nome_limpo']} ({r['nivel_atual'] or 'sem nível'})",
     axis=1,
 )
 
 # ---------------------------------------------------------------------------
-# Seleção de cliente
+# Abas: Visão geral  /  Por cliente
 # ---------------------------------------------------------------------------
-sel_label = st.selectbox(
-    "Escolha o cliente",
-    df_clients["label"].tolist(),
-)
+tab_visao, tab_cliente = st.tabs(["Visão geral", "Por cliente"])
 
-sel_row = df_clients.loc[df_clients["label"] == sel_label].iloc[0]
-sel_evo_id = sel_row["evo_id"]
+# ===========================================================================
+# ABA 1: VISÃO GERAL
+# ===========================================================================
+with tab_visao:
+    st.subheader("📊 Distribuição de níveis da base de alunos")
 
-st.markdown(f"**Cliente selecionado:** {sel_row['nome_limpo']}")
+    # --- Distribuição de nível (clients.nivel_atual) ---
+    try:
+        conn = get_connection()
+        df_dist = pd.read_sql_query(
+            """
+            SELECT
+                nivel_atual AS nivel,
+                COUNT(*)    AS qtd
+            FROM clients
+            WHERE nivel_atual IS NOT NULL
+            GROUP BY nivel_atual;
+            """,
+            conn,
+        )
+    finally:
+        conn.close()
 
-# ---------------------------------------------------------------------------
-# Busca histórico de nível desse cliente
-# ---------------------------------------------------------------------------
-conn = get_connection()
-try:
-    df_hist = pd.read_sql_query(
-        """
-        SELECT
-            data,
-            nivel,
-            nivel_ordem,
-            origem,
-            created_at
-        FROM level_history
-        WHERE evo_id = ?
-        ORDER BY data, id;
-        """,
-        conn,
-        params=[sel_evo_id],
+    if df_dist.empty:
+        st.info("Nenhum cliente com nível definido ainda.")
+    else:
+        # Ordena pelos níveis da nossa ordem padrão
+        df_dist["nivel"] = pd.Categorical(df_dist["nivel"], categories=LEVELS, ordered=True)
+        df_dist = df_dist.sort_values("nivel")
+
+        total_com_nivel = int(df_dist["qtd"].sum())
+        colm1, colm2 = st.columns(2)
+        with colm1:
+            st.metric("Clientes com nível definido", f"{total_com_nivel:,}".replace(",", "."))
+        with colm2:
+            st.metric("Níveis diferentes utilizados", df_dist["nivel"].nunique())
+
+        fig_dist = px.bar(
+            df_dist,
+            x="nivel",
+            y="qtd",
+            title="Distribuição de níveis na base de clientes",
+            labels={"nivel": "Nível", "qtd": "Quantidade de clientes"},
+        )
+        fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+        st.caption("Tabela de apoio")
+        st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
+
+    st.divider()
+    st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
+
+    # --- Tabela com todas as mudanças recentes (level_history) ---
+    dias = 10  # se quiser, podemos transformar em input depois
+    cutoff = (date.today() - timedelta(days=dias)).isoformat()
+
+    try:
+        conn = get_connection()
+        df_changes = pd.read_sql_query(
+            """
+            SELECT
+                lh.data,
+                lh.nivel,
+                lh.nivel_ordem,
+                lh.origem,
+                lh.evo_id,
+                c.nome_limpo
+            FROM level_history AS lh
+            LEFT JOIN clients AS c
+                   ON c.evo_id = lh.evo_id
+            WHERE lh.data >= ?
+            ORDER BY lh.data DESC, lh.id DESC;
+            """,
+            conn,
+            params=[cutoff],
+        )
+    finally:
+        conn.close()
+
+    if df_changes.empty:
+        st.info(f"Nenhuma mudança de nível registrada nos últimos {dias} dias.")
+    else:
+        st.caption(f"Mostrando mudanças a partir de {cutoff} (inclusive).")
+
+        # Converte data em datetime para ordenação/visualização
+        df_changes["data_dt"] = pd.to_datetime(df_changes["data"], errors="coerce")
+
+        colg1, colg2 = st.columns(2)
+        with colg1:
+            st.metric("Total de mudanças no período", int(len(df_changes)))
+        with colg2:
+            st.metric("Clientes diferentes afetados", df_changes["evo_id"].nunique())
+
+        # Ordena apenas para visual (já vem ordenado, mas garantimos)
+        df_changes = df_changes.sort_values(["data_dt", "evo_id"], ascending=[False, True])
+
+        # Mostra tabela enxuta
+        df_show = df_changes[["data", "nome_limpo", "evo_id", "nivel", "origem"]].copy()
+        df_show.rename(
+            columns={
+                "data": "Data",
+                "nome_limpo": "Cliente",
+                "evo_id": "EVO ID",
+                "nivel": "Nível",
+                "origem": "Origem",
+            },
+            inplace=True,
+        )
+        st.dataframe(df_show, use_container_width=True, height=400)
+
+# ===========================================================================
+# ABA 2: POR CLIENTE (tela que você já tinha)
+# ===========================================================================
+with tab_cliente:
+    st.subheader("🔍 Evolução por cliente")
+
+    # -----------------------------------------------------------------------
+    # Seleção de cliente
+    # -----------------------------------------------------------------------
+    sel_label = st.selectbox(
+        "Escolha o cliente",
+        df_clients["label"].tolist(),
     )
-finally:
-    conn.close()
 
-# Métricas de topo
-col1, col2 = st.columns(2)
-with col1:
-    nivel_atual = sel_row["nivel_atual"] or "Não definido"
-    st.metric("Nível atual (último gravado)", nivel_atual)
+    sel_row = df_clients.loc[df_clients["label"] == sel_label].iloc[0]
+    sel_evo_id = sel_row["evo_id"]
 
-with col2:
-    total_mudancas = len(df_hist)
-    st.metric("Total de mudanças de nível registradas", int(total_mudancas))
+    st.markdown(f"**Cliente selecionado:** {sel_row['nome_limpo']}")
 
-st.divider()
+    # -----------------------------------------------------------------------
+    # Busca histórico de nível desse cliente
+    # -----------------------------------------------------------------------
+    conn = get_connection()
+    try:
+        df_hist = pd.read_sql_query(
+            """
+            SELECT
+                data,
+                nivel,
+                nivel_ordem,
+                origem,
+                created_at
+            FROM level_history
+            WHERE evo_id = ?
+            ORDER BY data, id;
+            """,
+            conn,
+            params=[sel_evo_id],
+        )
+    finally:
+        conn.close()
 
-# ---------------------------------------------------------------------------
-# Linha do tempo de níveis
-# ---------------------------------------------------------------------------
+    # Métricas de topo
+    col1, col2 = st.columns(2)
+    with col1:
+        nivel_atual = sel_row["nivel_atual"] or "Não definido"
+        st.metric("Nível atual (último gravado)", nivel_atual)
 
-# Ordem de níveis (do pior pro melhor)
-LEVELS = [
-    "1A","1B","1C","1D",
-    "2A","2B","2C","2D",
-    "3A","3B","3C","3D",
-    "4A","4B","4C","4D",
-]
-LEVEL_INDEX = {lvl: i for i, lvl in enumerate(LEVELS)}  # 1A=0, 1B=1, ...
+    with col2:
+        total_mudancas = len(df_hist)
+        st.metric("Total de mudanças de nível registradas", int(total_mudancas))
 
-st.subheader("Linha do tempo de níveis")
+    st.divider()
 
-if df_hist.empty:
-    st.info(
-        "Ainda não há histórico de nível para este cliente.\n\n"
-        "Dica: altere o nível dele no EVO e depois rode 'Atualizar clientes agora' "
-        "na Base de Clientes."
-    )
-else:
-    # Ordena por data e prepara para o gráfico
-    df_hist_plot = df_hist.sort_values("data").copy()
+    # -----------------------------------------------------------------------
+    # Linha do tempo de níveis
+    # -----------------------------------------------------------------------
+    st.subheader("Linha do tempo de níveis")
 
-    # Converte data em datetime
-    df_hist_plot["data_dt"] = pd.to_datetime(
-        df_hist_plot["data"], errors="coerce"
-    )
+    if df_hist.empty:
+        st.info(
+            "Ainda não há histórico de nível para este cliente.\n\n"
+            "Dica: altere o nível dele no EVO e depois rode 'Atualizar clientes agora' "
+            "na Base de Clientes."
+        )
+    else:
+        # Ordena por data e prepara para o gráfico
+        df_hist_plot = df_hist.sort_values("data").copy()
 
-    # Converte nível textual (1A, 3C, etc.) em índice 0..15
-    df_hist_plot["nivel_idx"] = df_hist_plot["nivel"].map(LEVEL_INDEX)
+        # Converte data em datetime
+        df_hist_plot["data_dt"] = pd.to_datetime(
+            df_hist_plot["data"], errors="coerce"
+        )
 
-    # Gráfico em degrau
-    fig = px.line(
-        df_hist_plot,
-        x="data_dt",
-        y="nivel_idx",
-        title="Linha do tempo de níveis",
-        markers=True,
-        text="nivel",
-    )
+        # Converte nível textual (1A, 3C, etc.) em índice 0..15
+        df_hist_plot["nivel_idx"] = df_hist_plot["nivel"].map(LEVEL_INDEX)
 
-    fig.update_traces(line_shape="hv")
+        # Gráfico em degrau
+        fig = px.line(
+            df_hist_plot,
+            x="data_dt",
+            y="nivel_idx",
+            title="Linha do tempo de níveis",
+            markers=True,
+            text="nivel",
+        )
 
-    # Só mostra ticks para os níveis que aparecem na série
-    niveis_usados = [
-        lvl for lvl in LEVELS
-        if lvl in df_hist_plot["nivel"].dropna().unique()
-    ]
+        fig.update_traces(line_shape="hv")
 
-    fig.update_layout(
-        xaxis_title="Data",
-        yaxis_title="Nível",
-        yaxis=dict(
-            tickmode="array",
-            tickvals=[LEVEL_INDEX[lvl] for lvl in niveis_usados],
-            ticktext=niveis_usados,
-        ),
-    )
+        # Só mostra ticks para os níveis que aparecem na série
+        niveis_usados = [
+            lvl for lvl in LEVELS
+            if lvl in df_hist_plot["nivel"].dropna().unique()
+        ]
 
-    st.plotly_chart(fig, use_container_width=True)
-    
-st.divider()
+        fig.update_layout(
+            xaxis_title="Data",
+            yaxis_title="Nível",
+            yaxis=dict(
+                tickmode="array",
+                tickvals=[LEVEL_INDEX[lvl] for lvl in niveis_usados],
+                ticktext=niveis_usados,
+            ),
+        )
 
-st.subheader("Histórico de níveis (level_history)")
-if df_hist.empty:
-    st.caption("Nenhum registro ainda.")
-else:
-    df_show = df_hist[["data", "nivel", "origem", "created_at"]].copy()
-    st.dataframe(df_show, use_container_width=True, height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    st.subheader("Histórico de níveis (level_history)")
+    if df_hist.empty:
+        st.caption("Nenhum registro ainda.")
+    else:
+        df_show_cli = df_hist[["data", "nivel", "origem", "created_at"]].copy()
+        df_show_cli.rename(
+            columns={
+                "data": "Data",
+                "nivel": "Nível",
+                "origem": "Origem",
+                "created_at": "Registrado em",
+            },
+            inplace=True,
+        )
+        st.dataframe(df_show_cli, use_container_width=True, height=300)
