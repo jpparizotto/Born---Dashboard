@@ -850,15 +850,19 @@ if "Bairro" in dfv.columns and not dfv.empty:
 
 if "Cidade" in dfv.columns and not dfv.empty:
     with cols2[1]:
-        top_cid = (
-            dfv.groupby("Cidade", as_index=False).size()
-            .rename(columns={"size": "Clientes"})
-            .sort_values("Clientes", ascending=False)
-            .head(20)
+        df_cidades = (
+            dfv.groupby("Cidade", as_index=False)
+               .size()
+               .rename(columns={"size": "Clientes"})
+               .sort_values("Clientes", ascending=False)
         )
-        fig = px.bar(top_cid, x="Cidade", y="Clientes", title="Top cidades (20)")
-        fig.update_layout(xaxis_tickangle=-35)
-        st.plotly_chart(fig, use_container_width=True)
+        total_clientes_cidades = df_cidades["Clientes"].sum()
+        df_cidades["% do total"] = (
+            df_cidades["Clientes"] / total_clientes_cidades * 100
+        ).round(1)
+
+        st.subheader("Cidades (todas)")
+        st.dataframe(df_cidades, use_container_width=True)
 
 st.divider()
 st.subheader("Dados (filtrados)")
