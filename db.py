@@ -266,11 +266,8 @@ def _ensure_daily_clients_table():
 
 def register_daily_client_count(total_clientes: int) -> None:
     """
-    Registra o total de clientes do dia (se ainda não houver registro).
-
-    - data: hoje
-    - total_clientes: total atual
-    - novos_clientes: diferença em relação ao último snapshot anterior
+    Registra o total de clientes do dia.
+    Se já existir registro no dia, ATUALIZA o valor.
     """
     _ensure_daily_clients_table()
     conn = get_connection()
@@ -278,32 +275,31 @@ def register_daily_client_count(total_clientes: int) -> None:
 
     hoje = date.today().isoformat()
 
-    # já tem registro pra hoje?
-    cur.execute("SELECT 1 FROM daily_clients WHERE data = ?;", (hoje,))
-    if cur.fetchone():
-        conn.close()
-        return  # já registrado hoje, não faz nada
-
-    # pega o último snapshot anterior (se houver)
+    # pega o último snapshot anterior
     cur.execute(
-        "SELECT data, total_clientes FROM daily_clients ORDER BY data DESC LIMIT 1;"
+        "SELECT data, total_clientes FROM daily_clients WHERE data < ? ORDER BY data DESC LIMIT 1;",
+        (hoje,)
     )
     row = cur.fetchone()
     last_total = row[1] if row else 0
 
     novos = max(int(total_clientes) - int(last_total), 0)
 
-    cur.execute(
-        """
-        INSERT INTO daily_clients (data, total_clientes, novos_clientes)
-        VALUES (?, ?, ?);
-        """,
-        (hoje, int(total_clientes), int(novos)),
-    )
+    # Se já existe registro pro dia, atualiza
+    cur.execute("SELECT 1 FROM daily_clients WHERE data = ?;", (hoje,))
+    if cur.fetchone():
+        cur.execute(
+            "UPDATE daily_clients SET total_clientes = ?, novos_clientes = ? WHERE data = ?;",
+            (int(total_clientes), int(novos), hoje)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO daily_clients (data, total_clientes, novos_clientes) VALUES (?, ?, ?);",
+            (hoje, int(total_clientes), int(novos))
+        )
 
     conn.commit()
     conn.close()
-
 
 def load_daily_client_counts() -> pd.DataFrame:
     """
