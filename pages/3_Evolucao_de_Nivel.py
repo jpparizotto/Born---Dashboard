@@ -155,8 +155,9 @@ with tab_visao:
     
         # 3) Compara com o nível anterior de cada aluno
         df_all["nivel_prev"] = df_all.groupby("evo_id")["nivel"].shift(1)
-        df_all["is_change"] = df_all["nivel_prev"].notna() & (df_all["nivel"] != df_all["nivel_prev"])
-    
+        # considera mudança sempre que o nível atual for diferente do anterior,
+        # inclusive quando antes era "sem nível" (None/NaN)
+        df_all["is_change"] = df_all["nivel"].notna() & (df_all["nivel"] != df_all["nivel_prev"])    
         # 4) Mantém só mudanças reais nos últimos X dias
         df_changes = df_all[df_all["is_change"] & (df_all["data"] >= cutoff)]
     
@@ -187,8 +188,11 @@ with tab_visao:
                 },
                 inplace=True,
             )
+            
+            # trata quem não tinha nível como "0"
+            df_show["Nível anterior"] = df_show["Nível anterior"].fillna("0")
+            
             st.dataframe(df_show, use_container_width=True, height=400)
-
 
     if df_changes.empty:
         st.info(f"Nenhuma mudança de nível registrada nos últimos {dias} dias.")
