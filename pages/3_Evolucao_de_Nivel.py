@@ -82,7 +82,6 @@ with tab_visao:
                 nivel_atual AS nivel,
                 COUNT(*)    AS qtd
             FROM clients
-            WHERE nivel_atual IS NOT NULL
             GROUP BY nivel_atual;
             """,
             conn,
@@ -93,17 +92,28 @@ with tab_visao:
     if df_dist.empty:
         st.info("Nenhum cliente com nível definido ainda.")
     else:
-        # Ordena pelos níveis da nossa ordem padrão
-        df_dist["nivel"] = pd.Categorical(df_dist["nivel"], categories=LEVELS, ordered=True)
+        # Trata quem não tem nível como "0"
+        df_dist["nivel"] = df_dist["nivel"].fillna("0")
+    
+        # Ordena com "0" antes de todos os níveis
+        df_dist["nivel"] = pd.Categorical(
+            df_dist["nivel"],
+            categories=["0"] + LEVELS,   # 0 vem antes do 1A
+            ordered=True,
+        )
         df_dist = df_dist.sort_values("nivel")
-
-        total_com_nivel = int(df_dist["qtd"].sum())
+    
+        # Totais
+        total_sem_nivel = int(df_dist.loc[df_dist["nivel"] == "0", "qtd"].sum())
+        total_com_nivel = int(df_dist.loc[df_dist["nivel"] != "0", "qtd"].sum())
+    
         colm1, colm2 = st.columns(2)
         with colm1:
             st.metric("Clientes com nível definido", f"{total_com_nivel:,}".replace(",", "."))
         with colm2:
-            st.metric("Níveis diferentes utilizados", df_dist["nivel"].nunique())
-
+            st.metric("Clientes sem nível", f"{total_sem_nivel:,}".replace(",", "."))
+    
+        # Gráfico
         fig_dist = px.bar(
             df_dist,
             x="nivel",
@@ -113,7 +123,8 @@ with tab_visao:
         )
         fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
         st.plotly_chart(fig_dist, use_container_width=True)
-
+    
+        # Tabela
         st.caption("Tabela de apoio")
         st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
 
