@@ -154,10 +154,20 @@ with tab_visao:
         df_all = df_all.sort_values(["evo_id", "data_dt", "id"])
     
         # 3) Compara com o nível anterior de cada aluno
+        ZERO_ACTIVATION_DATE = "2025-11-16"  # ajuste se quiser mudar a data depois
+        # 3) Compara com o nível anterior de cada aluno
         df_all["nivel_prev"] = df_all.groupby("evo_id")["nivel"].shift(1)
-        # considera mudança sempre que o nível atual for diferente do anterior,
-        # inclusive quando antes era "sem nível" (None/NaN)
-        df_all["is_change"] = df_all["nivel"].notna() & (df_all["nivel"] != df_all["nivel_prev"])    
+        # Mudança "normal": havia nível anterior e mudou
+        mask_mudanca_normal = df_all["nivel_prev"].notna() & (df_all["nivel"] != df_all["nivel_prev"])
+        # Mudança de "sem nível" -> algum nível,
+        # mas APENAS a partir de ZERO_ACTIVATION_DATE
+        mask_de_zero_para_nivel = (
+            df_all["nivel_prev"].isna()
+            & df_all["nivel"].notna()
+            & (df_all["data"] >= ZERO_ACTIVATION_DATE)
+        )
+        df_all["is_change"] = mask_mudanca_normal | mask_de_zero_para_nivel 
+                
         # 4) Mantém só mudanças reais nos últimos X dias
         df_changes = df_all[df_all["is_change"] & (df_all["data"] >= cutoff)]
     
