@@ -154,7 +154,7 @@ with tab_visao:
         df_all = df_all.sort_values(["evo_id", "data_dt", "id"])
     
         # 3) Compara com o nível anterior de cada aluno
-        ZERO_ACTIVATION_DATE = "2025-11-16"  # ajuste se quiser mudar a data depois
+        ZERO_ACTIVATION_DATE = "2025-11-17"  # ajuste se quiser mudar a data depois
         # 3) Compara com o nível anterior de cada aluno
         df_all["nivel_prev"] = df_all.groupby("evo_id")["nivel"].shift(1)
         # Mudança "normal": havia nível anterior e mudou
