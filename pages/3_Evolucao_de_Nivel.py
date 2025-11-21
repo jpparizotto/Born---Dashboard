@@ -41,6 +41,13 @@ try:
         """,
         conn,
     )
+
+    # Normalização: string vazia vira None
+    df_clients["nivel_atual"] = df_clients["nivel_atual"].replace("", None)
+    
+    # Contagens corretas
+    total_sem_nivel = df_clients["nivel_atual"].isna().sum()
+    total_com_nivel = df_clients["nivel_atual"].notna().sum()
 except sqlite3.Error as e:
     st.error("Erro ao ler clientes do banco interno.")
     st.exception(e)
@@ -76,16 +83,53 @@ with tab_visao:
     # --- Distribuição de nível (clients.nivel_atual) ---
     try:
         conn = get_connection()
-        df_dist = pd.read_sql_query(
-            """
-            SELECT
-                nivel_atual AS nivel,
-                COUNT(*)    AS qtd
-            FROM clients
-            GROUP BY nivel_atual;
-            """,
-            conn,
+        # Trata sem nível como "0" SOMENTE para o gráfico
+        df_dist["nivel"] = df_dist["nivel"].fillna("0")
+        
+        all_levels = ["0"] + LEVELS
+        
+        # Agrega corretamente
+        df_dist = (
+            df_dist.groupby("nivel", as_index=False)["qtd"]
+                   .sum()
         )
+        
+        # Garante presença de todos os níveis mesmo com zero
+        df_dist = (
+            df_dist.set_index("nivel")
+                   .reindex(all_levels, fill_value=0)
+                   .reset_index()
+        )
+        
+        # Ordenação categórica
+        df_dist["nivel"] = pd.Categorical(
+            df_dist["nivel"],
+            categories=all_levels,
+            ordered=True,
+        )
+        
+        # KPIs (usando métricas reais)
+        colm1, colm2 = st.columns(2)
+        with colm1:
+            st.metric("Clientes com nível definido", f"{total_com_nivel:,}".replace(",", "."))
+        with colm2:
+            st.metric("Clientes sem nível", f"{total_sem_nivel:,}".replace(",", "."))
+        
+        # Gráfico
+        fig_dist = px.bar(
+            df_dist,
+            x="nivel",
+            y="qtd",
+            title="Distribuição de níveis na base de clientes",
+            labels={"nivel": "Nível", "qtd": "Quantidade de clientes"},
+        )
+        fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
+        st.plotly_chart(fig_dist, use_container_width=True)
+        
+        # Tabela
+        st.caption("Tabela de apoio")
+        st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
+
     finally:
         conn.close()
 
