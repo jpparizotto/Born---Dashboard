@@ -41,20 +41,18 @@ try:
         """,
         conn,
     )
-
-    # Normalização: string vazia vira None
-    df_clients["nivel_atual"] = df_clients["nivel_atual"].replace("", None)
-    
-    # Contagens corretas
-    total_sem_nivel = df_clients["nivel_atual"].isna().sum()
-    total_com_nivel = df_clients["nivel_atual"].notna().sum()
 except sqlite3.Error as e:
     st.error("Erro ao ler clientes do banco interno.")
     st.exception(e)
     st.stop()
 finally:
     conn.close()
+# Normalização: string vazia vira None
+df_clients["nivel_atual"] = df_clients["nivel_atual"].replace("", None)
 
+# Contagens corretas
+total_sem_nivel = df_clients["nivel_atual"].isna().sum()
+total_com_nivel = df_clients["nivel_atual"].notna().sum()
 if df_clients.empty:
     st.info(
         "Nenhum cliente encontrado no banco.\n\n"
