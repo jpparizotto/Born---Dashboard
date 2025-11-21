@@ -136,7 +136,15 @@ with tab_visao:
             title="Distribuição de níveis na base de clientes",
             labels={"nivel": "Nível", "qtd": "Quantidade de clientes"},
         )
-        fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
+        
+        fig_dist.update_traces(text=df_dist["qtd"], textposition="outside")
+        fig_dist.update_layout(
+            xaxis_title="Nível",
+            yaxis_title="Clientes",
+            uniformtext_minsize=8,
+            uniformtext_mode="hide"
+        )
+        
         st.plotly_chart(fig_dist, use_container_width=True)
 
         # Tabela
@@ -206,10 +214,15 @@ with tab_visao:
                     title="Distribuição de níveis — Masculino",
                     labels={"nivel": "Nível", "qtd": "Clientes"},
                 )
+                
+                fig_homem.update_traces(text=df_homem_grp["qtd"], textposition="outside")
                 fig_homem.update_layout(
                     xaxis_title="Nível",
                     yaxis_title="Clientes",
+                    uniformtext_minsize=8,
+                    uniformtext_mode="hide",
                 )
+                
                 st.plotly_chart(fig_homem, use_container_width=True)
 
         # 3) Gráfico de barras - apenas mulheres
@@ -224,18 +237,23 @@ with tab_visao:
                              .rename(columns={"size": "qtd"})
                              .sort_values("nivel")
                 )
-                fig_mulher = px.bar(
-                    df_mulher_grp,
-                    x="nivel",
-                    y="qtd",
-                    title="Distribuição de níveis — Feminino",
-                    labels={"nivel": "Nível", "qtd": "Clientes"},
-                )
-                fig_mulher.update_layout(
-                    xaxis_title="Nível",
-                    yaxis_title="Clientes",
-                )
-                st.plotly_chart(fig_mulher, use_container_width=True)
+                    fig_mulher = px.bar(
+                        df_mulher_grp,
+                        x="nivel",
+                        y="qtd",
+                        title="Distribuição de níveis — Feminino",
+                        labels={"nivel": "Nível", "qtd": "Clientes"},
+                    )
+                    
+                    fig_mulher.update_traces(text=df_mulher_grp["qtd"], textposition="outside")
+                    fig_mulher.update_layout(
+                        xaxis_title="Nível",
+                        yaxis_title="Clientes",
+                        uniformtext_minsize=8,
+                        uniformtext_mode="hide",
+                    )
+                    
+                    st.plotly_chart(fig_mulher, use_container_width=True)
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
