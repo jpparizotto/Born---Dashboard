@@ -383,32 +383,50 @@ LEVEL_ORDER_MAP = {
 
 def split_nome_e_nivel(nome: str):
     """
-    Recebe algo como 'DANIEL BRUNS 1B' ou 'HENRIQUE 3A SB/2CSKI'
-    e retorna (nome_limpo, nivel_atual, nivel_ordem).
-
-    Regra:
-    - procura todos os padrões [1-4][A-D]
-    - escolhe o de MAIOR ordem (do pior pro melhor: 1A ... 4D)
-    - remove todos esses códigos do texto do nome
+    Extrai nível de um nome de forma robusta:
+    - aceita variações como "2 B", "3A+", "4C.", "1D SKI", "2A/3B"
+    - mantém apenas padrões válidos 1A–4D
+    - se houver múltiplos, escolhe o MAIOR nível (ex: 2A/3B → 3B)
     """
+
     if not nome:
         return "", None, None
 
-    nome_str = str(nome).strip()
-    matches = re.findall(r'([1-4][A-D])', nome_str.upper())
+    nome_str = str(nome).strip().upper()
+
+    # Regex robusto:
+    # - 1 a 4
+    # - opcional espaço
+    # - A a D
+    # - opcional caractere extra não alfanumérico
+    pattern = r"\b([1-4]\s*[A-D])\b|([1-4]\s*[A-D])(?=[^A-Z0-9])"
+
+    # Encontra todos os possíveis níveis
+    matches = re.findall(pattern, nome_str)
+
+    # matches vem como lista de tuplas, precisamos limpar:
+    matches = [m[0] or m[1] for m in matches if m[0] or m[1]]
+
+    # Normaliza espaços (“2 B” → “2B”)
+    matches = [m.replace(" ", "") for m in matches]
+
+    # Confere se são válidos mesmo
+    matches = [m for m in matches if m in LEVEL_ORDER_MAP]
+
     if not matches:
+        # Sem nível encontrado
         return nome_str, None, None
 
+    # Escolhe o melhor nível (maior ordem)
     best = max(matches, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
-    nivel_atual = best
-    nivel_ordem = LEVEL_ORDER_MAP.get(best)
 
+    # Remove todos padrões encontrados do nome limpo
     nome_limpo = nome_str
     for code in set(matches):
         nome_limpo = re.sub(r'\b' + re.escape(code) + r'\b', '', nome_limpo, flags=re.IGNORECASE)
     nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip()
 
-    return nome_limpo, nivel_atual, nivel_ordem
+    return nome_limpo, best, LEVEL_ORDER_MAP[best]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE CLIENTES
