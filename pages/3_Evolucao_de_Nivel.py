@@ -35,7 +35,7 @@ try:
     conn = get_connection()
     df_clients = pd.read_sql_query(
         """
-        SELECT evo_id, nome_limpo, nome_bruto, nivel_atual, nivel_ordem
+        SELECT evo_id, nome_limpo, nome_bruto, sexo, nivel_atual, nivel_ordem
         FROM clients
         ORDER BY nome_limpo COLLATE NOCASE;
         """,
@@ -146,6 +146,96 @@ with tab_visao:
             use_container_width=True,
             height=260,
         )
+    
+    # ─────────────────────────────────────────────────────────────
+    # GRÁFICOS ADICIONAIS
+    # ─────────────────────────────────────────────────────────────
+    st.subheader("📊 Visões adicionais de distribuição de nível")
+
+    # Considera apenas quem tem nível definido
+    df_com_nivel = df_clients[df_clients["nivel_atual"].notna()].copy()
+
+    if df_com_nivel.empty:
+        st.info("Nenhum cliente com nível definido para gerar os gráficos adicionais.")
+    else:
+        # Normaliza coluna de nível como categórica ordenada
+        df_com_nivel["nivel"] = pd.Categorical(
+            df_com_nivel["nivel_atual"],
+            categories=LEVELS,
+            ordered=True,
+        )
+
+        # 1) Gráfico de pizza (todos os clientes com nível)
+        df_pizza = (
+            df_com_nivel.groupby("nivel", as_index=False)
+                        .size()
+                        .rename(columns={"size": "qtd"})
+                        .sort_values("nivel")
+        )
+
+        col_pizza, _ = st.columns(2)
+        with col_pizza:
+            fig_pizza = px.pie(
+                df_pizza,
+                names="nivel",
+                values="qtd",
+                title="Distribuição de níveis (apenas quem tem nível)",
+            )
+            fig_pizza.update_traces(textposition="inside",
+                                    textinfo="label+percent+value")
+            st.plotly_chart(fig_pizza, use_container_width=True)
+
+        # 2) Gráfico de barras - apenas homens
+        cols_genero = st.columns(2)
+
+        with cols_genero[0]:
+            df_homem = df_com_nivel[df_com_nivel["sexo"] == "Masculino"].copy()
+            if df_homem.empty:
+                st.info("Nenhum cliente masculino com nível definido.")
+            else:
+                df_homem_grp = (
+                    df_homem.groupby("nivel", as_index=False)
+                            .size()
+                            .rename(columns={"size": "qtd"})
+                            .sort_values("nivel")
+                )
+                fig_homem = px.bar(
+                    df_homem_grp,
+                    x="nivel",
+                    y="qtd",
+                    title="Distribuição de níveis — Masculino",
+                    labels={"nivel": "Nível", "qtd": "Clientes"},
+                )
+                fig_homem.update_layout(
+                    xaxis_title="Nível",
+                    yaxis_title="Clientes",
+                )
+                st.plotly_chart(fig_homem, use_container_width=True)
+
+        # 3) Gráfico de barras - apenas mulheres
+        with cols_genero[1]:
+            df_mulher = df_com_nivel[df_com_nivel["sexo"] == "Feminino"].copy()
+            if df_mulher.empty:
+                st.info("Nenhuma cliente feminina com nível definido.")
+            else:
+                df_mulher_grp = (
+                    df_mulher.groupby("nivel", as_index=False)
+                             .size()
+                             .rename(columns={"size": "qtd"})
+                             .sort_values("nivel")
+                )
+                fig_mulher = px.bar(
+                    df_mulher_grp,
+                    x="nivel",
+                    y="qtd",
+                    title="Distribuição de níveis — Feminino",
+                    labels={"nivel": "Nível", "qtd": "Clientes"},
+                )
+                fig_mulher.update_layout(
+                    xaxis_title="Nível",
+                    yaxis_title="Clientes",
+                )
+                st.plotly_chart(fig_mulher, use_container_width=True)
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
