@@ -78,41 +78,56 @@ tab_visao, tab_cliente = st.tabs(["Visão geral", "Por cliente"])
 with tab_visao:
     st.subheader("📊 Distribuição de níveis da base de alunos")
 
-    # --- Distribuição de nível (clients.nivel_atual) ---
-    try:
-        conn = get_connection()
-        # Trata sem nível como "0" SOMENTE para o gráfico
-        df_dist["nivel"] = df_dist["nivel"].fillna("0")
-        
-        all_levels = ["0"] + LEVELS
-        
-        # Agrega corretamente
+    # Monta a distribuição de níveis a partir de df_clients
+    df_dist = (
+        df_clients
+        .assign(nivel=df_clients["nivel_atual"])
+        .groupby("nivel", dropna=False)
+        .size()
+        .reset_index(name="qtd")
+    )
+
+    if df_dist.empty:
+        st.info("Nenhum cliente encontrado na base.")
+    else:
+        # Trata sem nível como "0" SOMENTE para o gráfico/tabela
+        df_dist["nivel"] = df_dist["nivel"].fillna("0").astype(str)
+
+        all_levels = ["0"] + LEVELS  # LEVELS = ["1A","1B",...,"4D"]
+
+        # agrega por segurança
         df_dist = (
             df_dist.groupby("nivel", as_index=False)["qtd"]
                    .sum()
         )
-        
-        # Garante presença de todos os níveis mesmo com zero
+
+        # garante que todos os níveis existam (mesmo com 0 clientes)
         df_dist = (
             df_dist.set_index("nivel")
                    .reindex(all_levels, fill_value=0)
                    .reset_index()
         )
-        
-        # Ordenação categórica
+
+        # ordenação categórica
         df_dist["nivel"] = pd.Categorical(
             df_dist["nivel"],
             categories=all_levels,
             ordered=True,
         )
-        
-        # KPIs (usando métricas reais)
+
+        # KPIs usando as métricas oficiais calculadas lá em cima
         colm1, colm2 = st.columns(2)
         with colm1:
-            st.metric("Clientes com nível definido", f"{total_com_nivel:,}".replace(",", "."))
+            st.metric(
+                "Clientes com nível definido",
+                f"{total_com_nivel:,}".replace(",", "."),
+            )
         with colm2:
-            st.metric("Clientes sem nível", f"{total_sem_nivel:,}".replace(",", "."))
-        
+            st.metric(
+                "Clientes sem nível",
+                f"{total_sem_nivel:,}".replace(",", "."),
+            )
+
         # Gráfico
         fig_dist = px.bar(
             df_dist,
@@ -123,55 +138,18 @@ with tab_visao:
         )
         fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
         st.plotly_chart(fig_dist, use_container_width=True)
-        
+
         # Tabela
         st.caption("Tabela de apoio")
-        st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
-
-    finally:
-        conn.close()
-
-    if df_dist.empty:
-        st.info("Nenhum cliente com nível definido ainda.")
-    else:
-        # Trata quem não tem nível como "0"
-        df_dist["nivel"] = df_dist["nivel"].fillna("0")
-    
-        # Ordena com "0" antes de todos os níveis
-        df_dist["nivel"] = pd.Categorical(
-            df_dist["nivel"],
-            categories=["0"] + LEVELS,   # 0 vem antes do 1A
-            ordered=True,
+        st.dataframe(
+            df_dist.reset_index(drop=True),
+            use_container_width=True,
+            height=260,
         )
-        df_dist = df_dist.sort_values("nivel")
-    
-        # Totais
-        total_sem_nivel = int(df_dist.loc[df_dist["nivel"] == "0", "qtd"].sum())
-        total_com_nivel = int(df_dist.loc[df_dist["nivel"] != "0", "qtd"].sum())
-    
-        colm1, colm2 = st.columns(2)
-        with colm1:
-            st.metric("Clientes com nível definido", f"{total_com_nivel:,}".replace(",", "."))
-        with colm2:
-            st.metric("Clientes sem nível", f"{total_sem_nivel:,}".replace(",", "."))
-    
-        # Gráfico
-        fig_dist = px.bar(
-            df_dist,
-            x="nivel",
-            y="qtd",
-            title="Distribuição de níveis na base de clientes",
-            labels={"nivel": "Nível", "qtd": "Quantidade de clientes"},
-        )
-        fig_dist.update_layout(xaxis_title="Nível", yaxis_title="Clientes")
-        st.plotly_chart(fig_dist, use_container_width=True)
-    
-        # Tabela
-        st.caption("Tabela de apoio")
-        st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
+
     
     dias = 10  # se quiser, dá pra virar input depois
     cutoff = (date.today() - timedelta(days=dias)).isoformat()
