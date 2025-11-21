@@ -99,12 +99,14 @@ LEVEL_ORDER = {
 def _extract_nome_e_nivel(nome_bruto: str):
     """
     Recebe o nome como vem do EVO, ex:
-    'João Paulo 3C', 'HENRIQUE BISSOCI 3A SB/2CSKI', 'Marina 2B+'
+    'João Paulo 3C', 'HENRIQUE BISSOCI 3A SB/2CSKI', 'MARIA 1BSK', 'JOÃO 2CSB'
 
-    Retorna (nome_limpo, nivel), ex:
-    ('João Paulo', '3C')
-    ('HENRIQUE BISSOCI SB/ 2CSKI', '3A')
+    Regra:
+    - Procura todos os padrões [1-4][A-D], com ou sem espaço (2 B → 2B)
+    - Ignora o que vem depois (., +, SK, SB etc) na detecção do nível
+    - Se houver mais de um, escolhe o de maior ordem (1A..4D)
     """
+
     if not isinstance(nome_bruto, str):
         return "", None
 
@@ -114,25 +116,26 @@ def _extract_nome_e_nivel(nome_bruto: str):
 
     import re
 
-    # Aceita variações como "2 B", "2B+", "3C.", "4A/3B" etc.
-    pattern = r"\b([1-4]\s*[A-D])\b|([1-4]\s*[A-D])(?=[^A-Za-z0-9])"
-
+    # aceita "2B", "2 B", "1BSK", "2CSB", "3A.", "4C+"
+    pattern = r"([1-4]\s*[A-D])"
     matches = re.findall(pattern, texto.upper())
-    # junta os dois grupos possíveis da regex
-    matches = [m[0] or m[1] for m in matches if m[0] or m[1]]
+
+    if not matches:
+        return texto, None
+
     # normaliza "2 B" -> "2B"
     matches = [m.replace(" ", "") for m in matches]
 
-    # filtra só níveis válidos
+    # mantém só níveis válidos (1A..4D)
     matches = [m for m in matches if m in LEVEL_ORDER]
     if not matches:
         return texto, None
 
-    # Se houver mais de um, pega o de maior ordem (ex: 2A/3C -> 3C)
+    # pega o maior nível (pior -> melhor)
     best = max(matches, key=lambda x: LEVEL_ORDER.get(x, -1))
 
-    # Nome limpo: hoje você usa só o texto original;
-    # se quiser mesmo tirar o nível, dá pra ajustar aqui.
+    # nome_limpo: por enquanto mantemos o texto inteiro;
+    # se quiser realmente remover o código do nome, podemos refinar depois
     nome_limpo = texto.strip()
 
     return nome_limpo, best
