@@ -237,23 +237,23 @@ with tab_visao:
                              .rename(columns={"size": "qtd"})
                              .sort_values("nivel")
                 )
-                    fig_mulher = px.bar(
-                        df_mulher_grp,
-                        x="nivel",
-                        y="qtd",
-                        title="Distribuição de níveis — Feminino",
-                        labels={"nivel": "Nível", "qtd": "Clientes"},
-                    )
+                fig_mulher = px.bar(
+                    df_mulher_grp,
+                    x="nivel",
+                    y="qtd",
+                    title="Distribuição de níveis — Feminino",
+                    labels={"nivel": "Nível", "qtd": "Clientes"},
+                )
                     
-                    fig_mulher.update_traces(text=df_mulher_grp["qtd"], textposition="outside")
-                    fig_mulher.update_layout(
-                        xaxis_title="Nível",
-                        yaxis_title="Clientes",
-                        uniformtext_minsize=8,
-                        uniformtext_mode="hide",
-                    )
+                fig_mulher.update_traces(text=df_mulher_grp["qtd"], textposition="outside")
+                fig_mulher.update_layout(
+                    xaxis_title="Nível",
+                    yaxis_title="Clientes",
+                    uniformtext_minsize=8,
+                    uniformtext_mode="hide",
+                )
                     
-                    st.plotly_chart(fig_mulher, use_container_width=True)
+                st.plotly_chart(fig_mulher, use_container_width=True)
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
