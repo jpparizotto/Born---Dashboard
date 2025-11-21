@@ -383,50 +383,60 @@ LEVEL_ORDER_MAP = {
 
 def split_nome_e_nivel(nome: str):
     """
-    Extrai nível de um nome de forma robusta:
-    - aceita variações como "2 B", "3A+", "4C.", "1D SKI", "2A/3B"
-    - mantém apenas padrões válidos 1A–4D
-    - se houver múltiplos, escolhe o MAIOR nível (ex: 2A/3B → 3B)
+    Recebe algo como:
+      'DANIEL BRUNS 1B'
+      'HENRIQUE 3A SB/2CSKI'
+      'MARIA 1BSK'
+      'JOÃO 2CSB'
+
+    e retorna (nome_limpo, nivel_atual, nivel_ordem).
+
+    Regra:
+    - Procura todos os padrões [1-4][A-D] (aceita "2 B", "1BSK", "2CSB"...)
+    - Normaliza para "2B", "1B", "2C"
+    - Se houver vários, escolhe o de maior ordem
+    - Remove os códigos (com eventual SK/SB junto) do nome_limpo
     """
 
     if not nome:
         return "", None, None
 
-    nome_str = str(nome).strip().upper()
+    import re
 
-    # Regex robusto:
-    # - 1 a 4
-    # - opcional espaço
-    # - A a D
-    # - opcional caractere extra não alfanumérico
-    pattern = r"\b([1-4]\s*[A-D])\b|([1-4]\s*[A-D])(?=[^A-Z0-9])"
+    nome_str = str(nome).strip()
+    upper = nome_str.upper()
 
-    # Encontra todos os possíveis níveis
-    matches = re.findall(pattern, nome_str)
-
-    # matches vem como lista de tuplas, precisamos limpar:
-    matches = [m[0] or m[1] for m in matches if m[0] or m[1]]
-
-    # Normaliza espaços (“2 B” → “2B”)
-    matches = [m.replace(" ", "") for m in matches]
-
-    # Confere se são válidos mesmo
-    matches = [m for m in matches if m in LEVEL_ORDER_MAP]
+    # encontra "2B", "2 B", "1BSK", "2CSB", "3A.", "4C+"
+    pattern = r"([1-4]\s*[A-D])"
+    matches = re.findall(pattern, upper)
 
     if not matches:
-        # Sem nível encontrado
         return nome_str, None, None
 
-    # Escolhe o melhor nível (maior ordem)
-    best = max(matches, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
+    # normaliza "2 B" -> "2B"
+    matches = [m.replace(" ", "") for m in matches]
 
-    # Remove todos padrões encontrados do nome limpo
+    # filtra só níveis válidos
+    matches = [m for m in matches if m in LEVEL_ORDER_MAP]
+    if not matches:
+        return nome_str, None, None
+
+    # melhor nível
+    best = max(matches, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
+    nivel_atual = best
+    nivel_ordem = LEVEL_ORDER_MAP.get(best)
+
+    # remove todos os códigos do nome, inclusive casos colados com SK/SB
     nome_limpo = nome_str
     for code in set(matches):
-        nome_limpo = re.sub(r'\b' + re.escape(code) + r'\b', '', nome_limpo, flags=re.IGNORECASE)
+        # remove "1B", "1BSK", "1BSKI", "1BSB", etc
+        padrao_remocao = r'\b' + re.escape(code) + r'(?:SKI?|SBI?)?\b'
+        nome_limpo = re.sub(padrao_remocao, '', nome_limpo, flags=re.IGNORECASE)
+
+    # limpa espaços extras
     nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip()
 
-    return nome_limpo, best, LEVEL_ORDER_MAP[best]
+    return nome_limpo, nivel_atual, nivel_ordem
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE CLIENTES
