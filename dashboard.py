@@ -21,10 +21,6 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-from auth import require_login
-# exige login e papel admin
-user = require_login(allowed_roles=["admin"])
-
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG GERAL
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1091,6 +1087,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
