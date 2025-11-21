@@ -99,11 +99,14 @@ LEVEL_ORDER = {
 def _extract_nome_e_nivel(nome_bruto: str):
     """
     Recebe o nome como vem do EVO, ex:
-    'João Paulo 3C', 'HENRIQUE BISSOCI 3A SB/2CSKI', 'MARIA 1BSK', 'JOÃO 2CSB'
+    'João Paulo 3C',
+    'HENRIQUE 3A SB/2CSKI',
+    'MARIA 1BSK',
+    'JOÃO 2CSB'
 
     Regra:
     - Procura todos os padrões [1-4][A-D], com ou sem espaço (2 B → 2B)
-    - Ignora o que vem depois (., +, SK, SB etc) na detecção do nível
+    - Funciona mesmo colado em SK/SB, ponto, +, etc. (1BSK, 2CSB, 3A., 4C+)
     - Se houver mais de um, escolhe o de maior ordem (1A..4D)
     """
 
@@ -131,11 +134,10 @@ def _extract_nome_e_nivel(nome_bruto: str):
     if not matches:
         return texto, None
 
-    # pega o maior nível (pior -> melhor)
+    # pega o maior nível
     best = max(matches, key=lambda x: LEVEL_ORDER.get(x, -1))
 
-    # nome_limpo: por enquanto mantemos o texto inteiro;
-    # se quiser realmente remover o código do nome, podemos refinar depois
+    # por enquanto deixamos o nome inteiro como "limpo"
     nome_limpo = texto.strip()
 
     return nome_limpo, best
