@@ -816,7 +816,7 @@ with col_up_a:
 
                 # ⬅️ IMPORTANTE: aqui chamamos a função original que cria o CSV
                 # (copie exatamente o nome da função que estava no código original)
-                path = gerar_csv_slots(start, end)  
+                path = gerar_csv(start, end)  
                 # exemplo: gerar_csv_slots(), gerar_slots_csv(), gerar_csv_atividade()...
                 # se não lembrar o nome, me mande o trecho original que eu ajusto.
 
@@ -1091,6 +1091,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
