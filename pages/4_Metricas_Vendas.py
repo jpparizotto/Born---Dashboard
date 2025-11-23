@@ -213,13 +213,31 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 with tab1:
     st.subheader("💰 Vendas por dia (R$)")
+    # converter valores para mil reais
+    daily["total_vendas_mil"] = daily["total_vendas"] / 1000
+    
     fig_vendas = px.line(
         daily,
         x="Data",
-        y="total_vendas",
+        y="total_vendas_mil",
         markers=True,
-        labels={"Data": "Data", "total_vendas": "Vendas (R$)"},
+        labels={"Data": "Data", "total_vendas_mil": "Vendas (R$000)"},
     )
+    
+    # textos acima dos pontos — formatados em mil
+    textos_vendas = [
+        f"{v:,.1f}".replace(",", ".")
+        for v in daily["total_vendas_mil"]
+    ]
+    
+    fig_vendas.update_traces(
+        mode="lines+markers+text",
+        text=textos_vendas,
+        textposition="top center"
+    )
+    
+    # eixo Y começa em zero
+    fig_vendas.update_yaxes(rangemode="tozero")
     # números acima dos pontos, com separador de milhar como ponto
     textos_vendas = [
         f"{v:,.0f}".replace(",", ".")  # 1.000 em vez de 1,000
@@ -287,13 +305,30 @@ with tab4:
 with tab5:
     st.subheader("📈 Vendas acumuladas no período (R$)")
 
+    # converter acumuladas para mil reais
+    daily["vendas_acumuladas_mil"] = daily["vendas_acumuladas"] / 1000
+    
     fig_vendas_acum = px.line(
         daily,
         x="Data",
-        y="vendas_acumuladas",
+        y="vendas_acumuladas_mil",
         markers=True,
-        labels={"Data": "Data", "vendas_acumuladas": "Vendas acumuladas (R$)"},
+        labels={"Data": "Data", "vendas_acumuladas_mil": "Vendas acumuladas (R$000)"},
     )
+    
+    # texto em cima dos pontos
+    textos_vendas_acum = [
+        f"{v:,.1f}".replace(",", ".")
+        for v in daily["vendas_acumuladas_mil"]
+    ]
+    
+    fig_vendas_acum.update_traces(
+        mode="lines+markers+text",
+        text=textos_vendas_acum,
+        textposition="top center"
+    )
+    
+    fig_vendas_acum.update_yaxes(rangemode="tozero")
 
     # texto acima dos pontos — formatado com ponto como separador de milhar
     textos_vendas_acum = [
