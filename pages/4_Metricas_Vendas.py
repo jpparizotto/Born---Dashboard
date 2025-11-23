@@ -240,8 +240,8 @@ with tab1:
     fig_vendas.update_yaxes(rangemode="tozero")
     # números acima dos pontos, com separador de milhar como ponto
     textos_vendas = [
-        f"{v:,.0f}".replace(",", ".")  # 1.000 em vez de 1,000
-        for v in daily["total_vendas"]
+        f"{v:,.1f}".replace(",", ".")
+        for v in daily["total_vendas_mil"]
     ]
     fig_vendas.update_traces(
         mode="lines+markers+text",
@@ -332,8 +332,8 @@ with tab5:
 
     # texto acima dos pontos — formatado com ponto como separador de milhar
     textos_vendas_acum = [
-        f"{v:,.0f}".replace(",", ".")  # ex: 30.450
-        for v in daily["vendas_acumuladas"]
+        f"{v:,.1f}".replace(",", ".")
+        for v in daily["vendas_acumuladas_mil"]
     ]
 
     fig_vendas_acum.update_traces(
