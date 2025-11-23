@@ -346,6 +346,59 @@ with tab5:
     fig_vendas_acum.update_yaxes(rangemode="tozero")
 
     st.plotly_chart(fig_vendas_acum, use_container_width=True)
+    
+# ─────────────────────────────────────────────────────────
+# GRÁFICO DE PIZZA – DISTRIBUIÇÃO DOS SLOTS POR PRODUTO
+# ─────────────────────────────────────────────────────────
+st.markdown("### 🍕 Distribuição dos Slots Vendidos por Produto")
+
+# Classificação baseada no texto da descrição
+def classificar_produto(desc: str) -> str:
+    if pd.isna(desc):
+        return "Indefinido"
+
+    up = desc.upper()
+
+    if "SEMESTRAL" in up:
+        return "Plano Semestral (24 slots)"
+    if "TRIMESTRAL" in up:
+        return "Plano Trimestral (12 slots)"
+    if "MENSAL" in up:
+        return "Plano Mensal (4 slots)"
+    if "AVULSA" in up:
+        return "Avulsa (1 slot)"
+
+    # Pacote (X sessões)
+    m = re.search(r"\((\d+)\s*sess", desc, flags=re.IGNORECASE)
+    if m:
+        n = int(m.group(1))
+        return f"Pacote {n} sessões ({n} slots)"
+
+    return "Outros"
+
+# cria coluna classificando cada venda
+df_base["Produto"] = df_base["Descrição"].apply(classificar_produto)
+
+# agrega slots por tipo
+pizza = (
+    df_base.groupby("Produto", as_index=False)
+    .agg(slots_totais=("slots_total", "sum"))
+    .sort_values("slots_totais", ascending=False)
+)
+
+# gráfico de pizza
+fig_pizza = px.pie(
+    pizza,
+    names="Produto",
+    values="slots_totais",
+    title="Participação dos Produtos nos Slots Vendidos (%)",
+    hole=0.4,  # donut chart (mais bonito)
+)
+
+fig_pizza.update_traces(textinfo="percent+label")
+
+st.plotly_chart(fig_pizza, use_container_width=True)
+
 
 # ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
