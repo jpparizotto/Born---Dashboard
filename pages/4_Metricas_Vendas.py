@@ -352,12 +352,11 @@ with tab5:
 # ─────────────────────────────────────────────────────────
 st.markdown("### 🍕 Distribuição dos Slots Vendidos por Produto")
 
-# Classificação baseada no texto da descrição
 def classificar_produto(desc: str) -> str:
     if pd.isna(desc):
         return "Indefinido"
 
-    up = desc.upper()
+    up = str(desc).upper()
 
     if "SEMESTRAL" in up:
         return "Plano Semestral (24 slots)"
@@ -368,18 +367,16 @@ def classificar_produto(desc: str) -> str:
     if "AVULSA" in up:
         return "Avulsa (1 slot)"
 
-    # Pacote (X sessões)
-    m = re.search(r"\((\d+)\s*sess", desc, flags=re.IGNORECASE)
+    m = re.search(r"\((\d+)\s*sess", str(desc), flags=re.IGNORECASE)
     if m:
         n = int(m.group(1))
         return f"Pacote {n} sessões ({n} slots)"
 
     return "Outros"
 
-# cria coluna classificando cada venda **após filtros**
+# IMPORTANTÍSSIMO: usar df_filtrado, não df_base
 df_filtrado["Produto"] = df_filtrado["Descrição"].apply(classificar_produto)
 
-# agrega slots por tipo (somente período / produtos filtrados)
 pizza = (
     df_filtrado
     .groupby("Produto", as_index=False)
@@ -387,7 +384,6 @@ pizza = (
     .sort_values("slots_totais", ascending=False)
 )
 
-# se não houver slots nesse filtro, avisa e não desenha o gráfico
 if pizza["slots_totais"].sum() == 0:
     st.info("Nenhum slot vendido no período/seleção atual para montar o gráfico de produtos.")
 else:
@@ -399,21 +395,9 @@ else:
         hole=0.4,
     )
     fig_pizza.update_traces(textinfo="percent+label")
-    st.plotly_chart(fig_pizza, use_container_width=True)
 
-# gráfico de pizza
-fig_pizza = px.pie(
-    pizza,
-    names="Produto",
-    values="slots_totais",
-    title="Participação dos Produtos nos Slots Vendidos (%)",
-    hole=0.4,  # donut chart (mais bonito)
-)
-
-fig_pizza.update_traces(textinfo="percent+label")
-
-st.plotly_chart(fig_pizza, use_container_width=True)
-
+    # 👇 AQUI ENTRA A CORREÇÃO: key única
+    st.plotly_chart(fig_pizza, use_container_width=True, key="pizza_slots_produto")
 
 # ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
