@@ -203,11 +203,12 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────
 # GRÁFICOS (com números em cima)
 # ─────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Vendas por dia",
     "Ticket médio (dia)",
     "Ticket médio acumulado",
     "Slots por dia",
+    "Vendas acumuladas (R$)",
 ])
 
 with tab1:
@@ -282,6 +283,34 @@ with tab4:
         textposition="outside"
     )
     st.plotly_chart(fig_slots, use_container_width=True)
+    
+with tab5:
+    st.subheader("📈 Vendas acumuladas no período (R$)")
+
+    fig_vendas_acum = px.line(
+        daily,
+        x="Data",
+        y="vendas_acumuladas",
+        markers=True,
+        labels={"Data": "Data", "vendas_acumuladas": "Vendas acumuladas (R$)"},
+    )
+
+    # texto acima dos pontos — formatado com ponto como separador de milhar
+    textos_vendas_acum = [
+        f"{v:,.0f}".replace(",", ".")  # ex: 30.450
+        for v in daily["vendas_acumuladas"]
+    ]
+
+    fig_vendas_acum.update_traces(
+        mode="lines+markers+text",
+        text=textos_vendas_acum,
+        textposition="top center"
+    )
+
+    # eixo Y começando em zero
+    fig_vendas_acum.update_yaxes(rangemode="tozero")
+
+    st.plotly_chart(fig_vendas_acum, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
