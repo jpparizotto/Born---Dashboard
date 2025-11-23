@@ -62,12 +62,12 @@ def show_login():
         # Login OK
         st.session_state.user = username
         st.session_state.role = user_cfg["role"]
-        st.experimental_rerun()  # Recarrega já logado
+        st.rerun()
 
 
 def logout():
     st.session_state.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────
