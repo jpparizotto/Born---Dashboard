@@ -4,7 +4,7 @@
 import streamlit as st
 import pandas as pd
 import re
-from datetime import datetime
+from datetime import datetime, date
 import plotly.express as px
 
 # ─────────────────────────────────────────────────────────
@@ -30,8 +30,8 @@ uploaded_file = st.file_uploader(
 if not uploaded_file:
     st.info(
         """
-        ▶ Exporta do EVO o relatório de vendas em Excel  
-        ▶ Sobe aqui o arquivo `.xlsx` para ver os gráficos e métricas.
+        ▶ Exporte do EVO o relatório de vendas em Excel  
+        ▶ Suba aqui o arquivo `.xlsx` para ver os gráficos e métricas.
         """
     )
     st.stop()
@@ -40,12 +40,14 @@ if not uploaded_file:
 # FUNÇÕES DE TRATAMENTO
 # ─────────────────────────────────────────────────────────
 def extract_slots(descricao: str) -> int:
+    """Converte a descrição do produto em número de slots."""
     if pd.isna(descricao):
         return 0
 
     text = str(descricao)
     up = text.upper()
 
+    # planos recorrentes
     if "SEMESTRAL" in up:
         return 24
     if "TRIMESTRAL" in up:
@@ -53,10 +55,12 @@ def extract_slots(descricao: str) -> int:
     if "MENSAL" in up:
         return 4
 
+    # pacotes: "(X sessões)"
     m = re.search(r"\((\d+)\s*sess", text, flags=re.IGNORECASE)
     if m:
         return int(m.group(1))
 
+    # avulsa
     if "AVULSA" in up:
         return 1
 
@@ -64,22 +68,31 @@ def extract_slots(descricao: str) -> int:
 
 
 @st.cache_data
-def carregar_e_processar(arquivo) -> pd.DataFrame:
+def carregar_e_processar(arquivo):
+    """Lê o Excel bruto, limpa e retorna:
+       - df_valid: todas as vendas válidas, linha a linha
+       - daily_full: consolidação diária sem filtros
+    """
     df = pd.read_excel(arquivo)
 
+    # remove testes
     df = df[~df["Descrição"].astype(str).str.contains("TESTE", case=False, na=False)].copy()
 
+    # numéricos
     df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
     df["Quantidade"] = pd.to_numeric(df.get("Quantidade", 1), errors="coerce").fillna(1)
 
+    # slots
     df["slots_por_venda"] = df["Descrição"].apply(extract_slots)
     df["slots_total"] = df["slots_por_venda"] * df["Quantidade"]
 
+    # data
     df["Data"] = pd.to_datetime(df["Data da venda"], errors="coerce").dt.date
 
     df_valid = df.dropna(subset=["Data", "Valor"])
 
-    daily = (
+    # consolidação diária geral (sem filtros)
+    daily_full = (
         df_valid
         .groupby("Data", as_index=False)
         .agg(
@@ -87,26 +100,83 @@ def carregar_e_processar(arquivo) -> pd.DataFrame:
             total_slots=("slots_total", "sum"),
         )
     )
+    daily_full["ticket_medio"] = daily_full["total_vendas"] / daily_full["total_slots"]
+    daily_full = daily_full.sort_values("Data")
+    daily_full["vendas_acumuladas"] = daily_full["total_vendas"].cumsum()
+    daily_full["slots_acumulados"] = daily_full["total_slots"].cumsum()
+    daily_full["ticket_medio_acumulado"] = (
+        daily_full["vendas_acumuladas"] / daily_full["slots_acumulados"]
+    )
 
-    daily["ticket_medio"] = daily["total_vendas"] / daily["total_slots"]
-    daily = daily.sort_values("Data")
-    daily["vendas_acumuladas"] = daily["total_vendas"].cumsum()
-    daily["slots_acumulados"] = daily["total_slots"].cumsum()
-    daily["ticket_medio_acumulado"] = daily["vendas_acumuladas"] / daily["slots_acumulados"]
-
-    return df_valid, daily
+    return df_valid, daily_full
 
 # ─────────────────────────────────────────────────────────
-# PROCESSAMENTO
+# PROCESSAMENTO E FILTROS
 # ─────────────────────────────────────────────────────────
 try:
-    df_base, daily = carregar_e_processar(uploaded_file)
+    df_base, daily_full = carregar_e_processar(uploaded_file)
 except Exception as e:
     st.error(f"Erro ao processar o arquivo: {e}")
     st.stop()
 
+# --- Filtros (sidebar) ---
+st.sidebar.header("Filtros — Métricas de Vendas")
+
+# intervalo de datas disponível
+min_date = df_base["Data"].min()
+max_date = df_base["Data"].max()
+
+date_range = st.sidebar.date_input(
+    "Período",
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date,
+)
+
+if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+    f_date_from, f_date_to = date_range
+else:
+    f_date_from, f_date_to = min_date, max_date
+
+# filtro por produto (Descrição)
+produtos_unicos = sorted(df_base["Descrição"].astype(str).unique())
+sel_produtos = st.sidebar.multiselect(
+    "Produtos (Descrição)",
+    options=produtos_unicos,
+    default=produtos_unicos,
+)
+
+# aplica filtros na base linha a linha
+mask = (df_base["Data"] >= f_date_from) & (df_base["Data"] <= f_date_to)
+
+if sel_produtos:
+    mask &= df_base["Descrição"].astype(str).isin(sel_produtos)
+
+df_filtrado = df_base[mask].copy()
+
+if df_filtrado.empty:
+    st.warning("Nenhuma venda encontrada com os filtros atuais.")
+    st.stop()
+
+# consolidação diária APÓS os filtros
+daily = (
+    df_filtrado
+    .groupby("Data", as_index=False)
+    .agg(
+        total_vendas=("Valor", "sum"),
+        total_slots=("slots_total", "sum"),
+    )
+)
+daily["ticket_medio"] = daily["total_vendas"] / daily["total_slots"]
+daily = daily.sort_values("Data")
+daily["vendas_acumuladas"] = daily["total_vendas"].cumsum()
+daily["slots_acumulados"] = daily["total_slots"].cumsum()
+daily["ticket_medio_acumulado"] = (
+    daily["vendas_acumuladas"] / daily["slots_acumulados"]
+)
+
 # ─────────────────────────────────────────────────────────
-# MÉTRICAS RESUMO
+# MÉTRICAS RESUMO (já filtradas)
 # ─────────────────────────────────────────────────────────
 col1, col2, col3 = st.columns(3)
 
@@ -131,7 +201,7 @@ with col3:
 st.markdown("---")
 
 # ─────────────────────────────────────────────────────────
-# GRÁFICOS
+# GRÁFICOS (com números em cima)
 # ─────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
     "Vendas por dia",
@@ -142,35 +212,90 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 with tab1:
     st.subheader("💰 Vendas por dia (R$)")
-    st.plotly_chart(
-        px.line(daily, x="Data", y="total_vendas", markers=True),
-        use_container_width=True
+    fig_vendas = px.line(
+        daily,
+        x="Data",
+        y="total_vendas",
+        markers=True,
+        labels={"Data": "Data", "total_vendas": "Vendas (R$)"},
     )
+    # números acima dos pontos
+    fig_vendas.update_traces(
+        mode="lines+markers+text",
+        text=daily["total_vendas"].round(0),
+        textposition="top center"
+    )
+    st.plotly_chart(fig_vendas, use_container_width=True)
 
 with tab2:
     st.subheader("🎯 Ticket médio por dia (R$/slot)")
-    st.plotly_chart(
-        px.line(daily, x="Data", y="ticket_medio", markers=True),
-        use_container_width=True
+    fig_tm = px.line(
+        daily,
+        x="Data",
+        y="ticket_medio",
+        markers=True,
+        labels={"Data": "Data", "ticket_medio": "Ticket médio (R$/slot)"},
     )
+    fig_tm.update_traces(
+        mode="lines+markers+text",
+        text=daily["ticket_medio"].round(2),
+        textposition="top center"
+    )
+    st.plotly_chart(fig_tm, use_container_width=True)
 
 with tab3:
     st.subheader("📈 Ticket médio acumulado (R$/slot)")
-    st.plotly_chart(
-        px.line(daily, x="Data", y="ticket_medio_acumulado", markers=True),
-        use_container_width=True
+    fig_tm_acum = px.line(
+        daily,
+        x="Data",
+        y="ticket_medio_acumulado",
+        markers=True,
+        labels={"Data": "Data", "ticket_medio_acumulado": "Ticket médio acumulado (R$/slot)"},
     )
+    fig_tm_acum.update_traces(
+        mode="lines+markers+text",
+        text=daily["ticket_medio_acumulado"].round(2),
+        textposition="top center"
+    )
+    st.plotly_chart(fig_tm_acum, use_container_width=True)
 
 with tab4:
     st.subheader("🎿 Slots vendidos por dia")
-    st.plotly_chart(
-        px.bar(daily, x="Data", y="total_slots"),
-        use_container_width=True
+    fig_slots = px.bar(
+        daily,
+        x="Data",
+        y="total_slots",
+        labels={"Data": "Data", "total_slots": "Slots vendidos"},
+        text="total_slots",
     )
+    fig_slots.update_traces(
+        textposition="outside"
+    )
+    st.plotly_chart(fig_slots, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────
-# TABELA DETALHADA
+# RESUMO POR PRODUTO (com filtros aplicados)
 # ─────────────────────────────────────────────────────────
-st.markdown("### 📋 Tabela diária consolidada")
-st.dataframe(daily, use_container_width=True)
+st.markdown("### 🧩 Resumo por produto (período filtrado)")
+
+resumo_prod = (
+    df_filtrado
+    .groupby("Descrição", as_index=False)
+    .agg(
+        total_vendas=("Valor", "sum"),
+        total_slots=("slots_total", "sum"),
+    )
+)
+resumo_prod["ticket_medio"] = resumo_prod["total_vendas"] / resumo_prod["total_slots"]
+
+st.dataframe(
+    resumo_prod.sort_values("total_vendas", ascending=False),
+    use_container_width=True
+)
+
+# ─────────────────────────────────────────────────────────
+# TABELA DIÁRIA CONSOLIDADA
+# ─────────────────────────────────────────────────────────
+st.mark
+
 
