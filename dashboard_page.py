@@ -574,19 +574,30 @@ def _materialize_rows(atividades, agenda_items):
 
     return rows
 
-def gerar_csv(date_from: str | None = None, date_to: str | None = None) -> str:
+def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = None) -> str:
     """
-    Coleta dias no período [date_from, date_to] (formato YYYY-MM-DD).
+    Coleta dias no período [date_from, date_to] (formato YYYY-MM-DD ou objetos date).
     Se None, usa hoje + DAYS_AHEAD_DEFAULT.
     Salva CSV em evo_ocupacao/ e retorna o caminho.
     """
     today = date.today()
+
     if not date_from or not date_to:
+        # fallback padrão: hoje + N dias
         d0 = today
         d1 = today + timedelta(days=DAYS_AHEAD_DEFAULT)
     else:
-        d0 = date.fromisoformat(date_from)
-        d1 = date.fromisoformat(date_to)
+        # aceita tanto string quanto datetime.date
+        if isinstance(date_from, date):
+            d0 = date_from
+        else:
+            d0 = date.fromisoformat(str(date_from))
+
+        if isinstance(date_to, date):
+            d1 = date_to
+        else:
+            d1 = date.fromisoformat(str(date_to))
+
         if d1 < d0:
             raise ValueError("date_to não pode ser menor que date_from.")
 
@@ -1091,6 +1102,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
