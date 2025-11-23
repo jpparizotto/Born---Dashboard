@@ -38,7 +38,7 @@ VERIFY_SSL = True
 DAYS_AHEAD_DEFAULT = 21
 
 # Senha para liberar o botão (opcional)
-DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
+# DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS GERAIS
@@ -795,14 +795,8 @@ st.subheader("Atualização dos dados")
 
 col_up_a, col_up_b = st.columns([1, 2])
 with col_up_a:
-    pwd_ok = True
-    if DASH_PWD:
-        senha = st.text_input("Senha (admin)", type="password", placeholder="Digite a senha para liberar")
-        pwd_ok = (senha == DASH_PWD)
-        if not pwd_ok:
-            st.caption("Dica: defina `DASHBOARD_PASSWORD` nos Secrets. Sem senha, o botão fica bloqueado.")
-
-    btn = st.button("🔄 Atualizar agora", type="primary", disabled=not pwd_ok)
+    # Agora não tem mais senha extra: quem chegou aqui já passou pelo login do app
+    btn = st.button("🔄 Atualizar agora", type="primary")
 
     if btn:
         try:
@@ -814,9 +808,10 @@ with col_up_a:
                     today = date.today()
                     n = DAYS_AHEAD_DEFAULT if dias_custom is None else dias_custom
                     start = today
-                    end = today + timedelta(days=int(n))
-    
-                path = gerar_csv(start.isoformat(), end.isoformat())
+                    end = today + timedelta(days=n)
+                else:
+                    start = date.today()
+                    end = date.today() + timedelta(days=DAYS_AHEAD_DEFAULT)
             st.success(f"Atualizado com sucesso!\nArquivo: {os.path.basename(path)}")
             st.rerun()
         except Exception as e:
@@ -1087,6 +1082,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
