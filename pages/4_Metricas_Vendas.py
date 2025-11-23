@@ -219,12 +219,18 @@ with tab1:
         markers=True,
         labels={"Data": "Data", "total_vendas": "Vendas (R$)"},
     )
-    # números acima dos pontos
+    # números acima dos pontos, com separador de milhar como ponto
+    textos_vendas = [
+        f"{v:,.0f}".replace(",", ".")  # 1.000 em vez de 1,000
+        for v in daily["total_vendas"]
+    ]
     fig_vendas.update_traces(
         mode="lines+markers+text",
-        text=daily["total_vendas"].round(0),
+        text=textos_vendas,
         textposition="top center"
     )
+    # eixo Y começando em 0
+    fig_vendas.update_yaxes(rangemode="tozero")
     st.plotly_chart(fig_vendas, use_container_width=True)
 
 with tab2:
@@ -236,9 +242,11 @@ with tab2:
         markers=True,
         labels={"Data": "Data", "ticket_medio": "Ticket médio (R$/slot)"},
     )
+    # texto sem casas decimais
+    textos_tm = [f"{v:.0f}" for v in daily["ticket_medio"]]
     fig_tm.update_traces(
         mode="lines+markers+text",
-        text=daily["ticket_medio"].round(2),
+        text=textos_tm,
         textposition="top center"
     )
     st.plotly_chart(fig_tm, use_container_width=True)
@@ -252,9 +260,11 @@ with tab3:
         markers=True,
         labels={"Data": "Data", "ticket_medio_acumulado": "Ticket médio acumulado (R$/slot)"},
     )
+    # texto sem casas decimais
+    textos_tm_acum = [f"{v:.0f}" for v in daily["ticket_medio_acumulado"]]
     fig_tm_acum.update_traces(
         mode="lines+markers+text",
-        text=daily["ticket_medio_acumulado"].round(2),
+        text=textos_tm_acum,
         textposition="top center"
     )
     st.plotly_chart(fig_tm_acum, use_container_width=True)
@@ -274,28 +284,9 @@ with tab4:
     st.plotly_chart(fig_slots, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────
-# RESUMO POR PRODUTO (com filtros aplicados)
-# ─────────────────────────────────────────────────────────
-st.markdown("### 🧩 Resumo por produto (período filtrado)")
-
-resumo_prod = (
-    df_filtrado
-    .groupby("Descrição", as_index=False)
-    .agg(
-        total_vendas=("Valor", "sum"),
-        total_slots=("slots_total", "sum"),
-    )
-)
-resumo_prod["ticket_medio"] = resumo_prod["total_vendas"] / resumo_prod["total_slots"]
-
-st.dataframe(
-    resumo_prod.sort_values("total_vendas", ascending=False),
-    use_container_width=True
-)
-
-# ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
 # ─────────────────────────────────────────────────────────
-st.mark
+st.markdown("### 📋 Tabela diária consolidada (após filtros)")
+st.dataframe(daily, use_container_width=True)
 
 
