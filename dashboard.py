@@ -100,22 +100,24 @@ evolucao_nivel_page = st.Page(
     "pages/3_Evolucao_de_Nivel.py", title="Evolução de Nível", icon="📈"
 )
 wipe_db_page = st.Page("pages/99_Wipe_DB.py", title="Wipe DB", icon="🧹")
-
-# Se quiser, depois você pode incluir outros módulos aqui, ex:
-# metricas_vendas_page = st.Page("pages/Métricas_Vendas", title="Métricas de Vendas", icon="💰")
+metricas_vendas_page = st.Page(
+    "pages/4_Metricas_Vendas.py",
+    title="Métricas de Vendas",
+    icon="💵"
+)
 
 pages_for_role = []
 
 if st.session_state.role == "admin":
-    # Admin vê tudo
     pages_for_role = [
         dashboard_page,
         base_clientes_page,
         evolucao_nivel_page,
+        metricas_vendas_page,
         wipe_db_page,
     ]
+
 elif st.session_state.role == "coach":
-    # Isabella vê só o que você pediu
     pages_for_role = [
         base_clientes_page,
         evolucao_nivel_page,
