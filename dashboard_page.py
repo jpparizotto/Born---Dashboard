@@ -795,12 +795,13 @@ st.subheader("Atualização dos dados")
 
 col_up_a, col_up_b = st.columns([1, 2])
 with col_up_a:
-    # Agora não tem mais senha extra: quem chegou aqui já passou pelo login do app
+    # Agora não tem mais senha extra: quem chegou aqui já passou pelo login
     btn = st.button("🔄 Atualizar agora", type="primary")
 
     if btn:
         try:
             with st.spinner("Coletando dados do EVO e gerando CSV..."):
+                # Determina intervalo de coleta
                 if coleta_mode == "Usar filtros atuais":
                     start = f_date_from
                     end = f_date_to
@@ -812,8 +813,16 @@ with col_up_a:
                 else:
                     start = date.today()
                     end = date.today() + timedelta(days=DAYS_AHEAD_DEFAULT)
+
+                # ⬅️ IMPORTANTE: aqui chamamos a função original que cria o CSV
+                # (copie exatamente o nome da função que estava no código original)
+                path = gerar_csv_slots(start, end)  
+                # exemplo: gerar_csv_slots(), gerar_slots_csv(), gerar_csv_atividade()...
+                # se não lembrar o nome, me mande o trecho original que eu ajusto.
+
             st.success(f"Atualizado com sucesso!\nArquivo: {os.path.basename(path)}")
             st.rerun()
+
         except Exception as e:
             st.error("Falha ao atualizar os dados.")
             with st.expander("Detalhes"):
@@ -822,7 +831,7 @@ with col_up_a:
 with col_up_b:
     st.caption("O botão gera um novo CSV no servidor (pasta `evo_ocupacao/`) e recarrega o painel.")
 
-# Se ainda não há dados, paramos aqui (depois do botão o usuário pode gerar)
+# Se ainda não há dados, paramos aqui
 if df_slots.empty:
     st.stop()
 
@@ -1082,6 +1091,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
