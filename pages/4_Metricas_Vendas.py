@@ -376,15 +376,30 @@ def classificar_produto(desc: str) -> str:
 
     return "Outros"
 
-# cria coluna classificando cada venda
-df_base["Produto"] = df_base["Descrição"].apply(classificar_produto)
+# cria coluna classificando cada venda **após filtros**
+df_filtrado["Produto"] = df_filtrado["Descrição"].apply(classificar_produto)
 
-# agrega slots por tipo
+# agrega slots por tipo (somente período / produtos filtrados)
 pizza = (
-    df_base.groupby("Produto", as_index=False)
+    df_filtrado
+    .groupby("Produto", as_index=False)
     .agg(slots_totais=("slots_total", "sum"))
     .sort_values("slots_totais", ascending=False)
 )
+
+# se não houver slots nesse filtro, avisa e não desenha o gráfico
+if pizza["slots_totais"].sum() == 0:
+    st.info("Nenhum slot vendido no período/seleção atual para montar o gráfico de produtos.")
+else:
+    fig_pizza = px.pie(
+        pizza,
+        names="Produto",
+        values="slots_totais",
+        title="Participação dos Produtos nos Slots Vendidos (%)",
+        hole=0.4,
+    )
+    fig_pizza.update_traces(textinfo="percent+label")
+    st.plotly_chart(fig_pizza, use_container_width=True)
 
 # gráfico de pizza
 fig_pizza = px.pie(
