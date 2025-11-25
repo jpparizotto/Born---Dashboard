@@ -126,6 +126,26 @@ def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
             return c
     return None
 
+def detectar_coluna_colaborador(df: pd.DataFrame) -> str | None:
+    """Tenta descobrir automaticamente qual coluna é o colaborador responsável pela venda."""
+    candidatos = [
+        "Colaborador",
+        "Colaborador ",
+        "Responsável",
+        "Responsavel",
+        "Vendedor",
+        "Usuário",
+        "Usuario",
+        "Operador",
+        "Atendente",
+        "Consultor",
+    ]
+    cols_lower = {c.lower(): c for c in df.columns}
+    for cand in candidatos:
+        if cand.lower() in cols_lower:
+            return cols_lower[cand.lower()]
+    return None
+
 # ─────────────────────────────────────────────────────────
 # PROCESSAMENTO E FILTROS
 # ─────────────────────────────────────────────────────────
@@ -145,11 +165,14 @@ try:
         ).str.strip()
 
         df_base["ClienteFull"] = df_base["ClienteFull"].str.title()
-
+    
     else:
         st.error("As colunas 'Nome' e 'Sobrenome' não foram encontradas no arquivo.")
         st.stop()
-
+    
+    # Detectar coluna de colaborador (vendedor / responsável)
+    col_colab = detectar_coluna_colaborador(df_base)
+    
 except Exception as e:
     st.error(f"Erro ao processar o arquivo: {e}")
     st.stop()
@@ -180,12 +203,25 @@ sel_produtos = st.sidebar.multiselect(
     options=produtos_unicos,
     default=produtos_unicos,
 )
+# filtro por colaborador (se a coluna existir)
+if col_colab:
+    colaboradores_unicos = sorted(df_base[col_colab].astype(str).unique())
+    sel_colaboradores = st.sidebar.multiselect(
+        "Colaboradores (responsável pela venda)",
+        options=colaboradores_unicos,
+        default=colaboradores_unicos,
+    )
+else:
+    sel_colaboradores = []
 
 # aplica filtros na base linha a linha
 mask = (df_base["Data"] >= f_date_from) & (df_base["Data"] <= f_date_to)
 
 if sel_produtos:
     mask &= df_base["Descrição"].astype(str).isin(sel_produtos)
+
+if col_colab and sel_colaboradores:
+    mask &= df_base[col_colab].astype(str).isin(sel_colaboradores)
 
 df_filtrado = df_base[mask].copy()
 
