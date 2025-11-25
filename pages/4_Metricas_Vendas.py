@@ -131,9 +131,28 @@ def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
 # ─────────────────────────────────────────────────────────
 try:
     df_base, daily_full = carregar_e_processar(uploaded_file)
+    # Criar coluna ClienteFull = Nome + Sobrenome
+    cols = df_base.columns.str.lower()
+    
+    if "nome" in cols and "sobrenome" in cols:
+        col_nome = df_base.columns[cols == "nome"][0]
+        col_sobrenome = df_base.columns[cols == "sobrenome"][0]
+    
+        df_base["ClienteFull"] = (
+            df_base[col_nome].fillna("").astype(str).str.strip() + " " +
+            df_base[col_sobrenome].fillna("").astype(str).str.strip()
+        ).str.strip()
+    
+        # Padronizar (primeira letra maiúscula)
+        df_base["ClienteFull"] = df_base["ClienteFull"].str.title()
+else:
+    st.error("As colunas 'Nome' e 'Sobrenome' não foram encontradas no arquivo.")
+    st.stop()
+
 except Exception as e:
     st.error(f"Erro ao processar o arquivo: {e}")
     st.stop()
+
 
 # --- Filtros (sidebar) ---
 st.sidebar.header("Filtros — Métricas de Vendas")
@@ -420,18 +439,14 @@ else:
 # ─────────────────────────────────────────────────────────
 st.markdown("### 👥 Distribuição de slots por cliente")
 
-col_cliente = detectar_coluna_cliente(df_filtrado)
-
-if not col_cliente:
-    st.info(
-        "Não consegui identificar automaticamente a coluna de cliente "
-        "(ex.: 'Cliente', 'Aluno'). Confere se o relatório do EVO tem uma dessas colunas."
-    )
+# Agora já temos a coluna ClienteFull criada no carregamento
+if "ClienteFull" not in df_filtrado.columns:
+    st.info("Nenhuma coluna de cliente disponível para esta análise.")
 else:
     # total de slots por cliente no período filtrado
     df_por_cliente = (
         df_filtrado
-        .groupby(col_cliente, as_index=False)
+        .groupby("ClienteFull", as_index=False)
         .agg(total_slots=("slots_total", "sum"))
     )
 
@@ -439,7 +454,7 @@ else:
     dist_slots = (
         df_por_cliente
         .groupby("total_slots", as_index=False)
-        .agg(qtd_clientes=("total_slots", "size"))
+        .agg(qtd_clientes=("ClienteFull", "count"))
         .sort_values("total_slots")
     )
 
@@ -457,13 +472,11 @@ else:
             text="qtd_clientes",
             title="Distribuição de clientes por quantidade de slots comprados",
         )
-        # mostrar o número acima da barra e um tick por inteiro no eixo X
         fig_dist.update_traces(textposition="outside")
         fig_dist.update_layout(xaxis=dict(dtick=1))
 
         st.plotly_chart(fig_dist, use_container_width=True)
 
-        # opcional: mostrar a tabela embaixo
         st.markdown("#### 📋 Tabela de distribuição")
         st.dataframe(dist_slots, use_container_width=True)
 
