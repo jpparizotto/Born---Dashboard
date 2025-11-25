@@ -505,51 +505,32 @@ else:
 
         st.markdown("#### 📋 Tabela de distribuição")
         st.dataframe(dist_slots, use_container_width=True)
-                # ─────────────────────────────────────────────
-        # TABELA RESUMO POR GRUPO DE SLOTS
-        # ─────────────────────────────────────────────
-        st.markdown("#### 📊 Resumo por grupo de slots")
 
-        tabela_grupos = dist_slots.copy()
-        tabela_grupos = tabela_grupos.rename(columns={
-            "total_slots": "Slots (grupo)",
-            "qtd_clientes": "Clientes",
-            "slots_grupo": "Slots do grupo",
-            "vendas_grupo": "Vendas do grupo (R$)",
-            "pct_clientes": "% clientes",
-            "pct_slots": "% slots",
-        })
-
-        # arredonda percentuais
-        tabela_grupos["% clientes"] = tabela_grupos["% clientes"].round(1)
-        tabela_grupos["% slots"] = tabela_grupos["% slots"].round(1)
-
-        st.dataframe(
-            tabela_grupos,
-            use_container_width=True,
-        )
         # ─────────────────────────────────────────────
         # MÉDIAS DE COMPRAS POR CLIENTE
         # ─────────────────────────────────────────────
-        st.markdown("#### 📌 Resumo de comportamento de compra")
-
-        media_compras_todos = df_por_cliente["num_vendas"].mean()
-
-        df_multi = df_por_cliente[df_por_cliente["num_vendas"] > 1]
-        media_compras_multi = (
-            df_multi["num_vendas"].mean() if not df_multi.empty else 0
+        st.markdown("#### 📌 Resumo de comportamento de slots")
+        
+        # slots médios por cliente (todos)
+        media_slots_todos = df_por_cliente["total_slots"].mean()
+        
+        # considera apenas clientes que têm mais de 1 slot no período
+        df_multi_slots = df_por_cliente[df_por_cliente["total_slots"] > 1]
+        media_slots_multi = (
+            df_multi_slots["total_slots"].mean() if not df_multi_slots.empty else 0
         )
-
+        
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.metric("Clientes pagantes no período", total_clientes)
         with col_b:
-            st.metric("Média de compras por cliente (todos)", f"{media_compras_todos:.2f}")
+            st.metric("Slots médios por cliente (todos)", f"{media_slots_todos:.2f}")
         with col_c:
             st.metric(
-                "Média de compras por cliente (quem comprou 2+ vezes)",
-                f"{media_compras_multi:.2f}",
+                "Slots médios por cliente (quem tem 2+ slots)",
+                f"{media_slots_multi:.2f}",
             )
+
         import io
         
         st.markdown("#### ⬇️ Baixar resumo por cliente (Excel)")
