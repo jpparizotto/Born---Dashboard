@@ -129,7 +129,7 @@ def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
 def detectar_coluna_colaborador(df: pd.DataFrame) -> str | None:
     """Tenta descobrir automaticamente qual coluna é o colaborador responsável pela venda."""
     candidatos = [
-        "Colaborador",
+        "Comissão",
         "Colaborador ",
         "Responsável",
         "Responsavel",
