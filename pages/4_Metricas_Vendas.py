@@ -127,23 +127,26 @@ def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
     return None
 
 def detectar_coluna_colaborador(df: pd.DataFrame) -> str | None:
-    """Tenta descobrir automaticamente qual coluna é o colaborador responsável pela venda."""
-    candidatos = [
-        "Comissão",
-        "Colaborador ",
-        "Responsável",
-        "Responsavel",
-        "Vendedor",
-        "Usuário",
-        "Usuario",
-        "Operador",
-        "Atendente",
-        "Consultor",
+    """
+    Descobre automaticamente qual coluna é o colaborador / responsável.
+    Usa busca por pedaços do nome (substring), não igualdade exata.
+    """
+    palavras_chave = [
+        "comissão", "comissao",
+        "colaborador",
+        "responsável", "responsavel",
+        "vendedor",
+        "usuário", "usuario",
+        "operador",
+        "atendente",
+        "consultor",
     ]
-    cols_lower = {c.lower(): c for c in df.columns}
-    for cand in candidatos:
-        if cand.lower() in cols_lower:
-            return cols_lower[cand.lower()]
+
+    for c in df.columns:
+        nome_lower = c.lower()
+        if any(p in nome_lower for p in palavras_chave):
+            return c  # retorna o nome original da coluna
+
     return None
 
 # ─────────────────────────────────────────────────────────
