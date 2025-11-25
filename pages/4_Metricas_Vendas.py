@@ -447,7 +447,11 @@ else:
     df_por_cliente = (
         df_filtrado
         .groupby("ClienteFull", as_index=False)
-        .agg(total_slots=("slots_total", "sum"))
+        .agg(
+            total_slots=("slots_total", "sum"),
+            total_vendas=("Valor", "sum"),
+            num_vendas=("slots_total", "size"),
+        )
     )
 
     # distribuição: quantos clientes compraram 1, 2, 3... slots
@@ -479,6 +483,34 @@ else:
 
         st.markdown("#### 📋 Tabela de distribuição")
         st.dataframe(dist_slots, use_container_width=True)
+        import io
+
+        st.markdown("#### ⬇️ Baixar resumo de clientes (Excel)")
+        
+        # ordena por slots (maior para menor) para facilitar análise
+        df_por_cliente_export = df_por_cliente.sort_values(
+            "total_slots", ascending=False
+        ).reset_index(drop=True)
+        
+        buffer_cli = io.BytesIO()
+        with pd.ExcelWriter(buffer_cli, engine="xlsxwriter") as writer:
+            df_por_cliente_export.to_excel(writer, index=False, sheet_name="Clientes")
+            ws = writer.sheets["Clientes"]
+        
+            # ajustar largura das colunas
+            for i, col in enumerate(df_por_cliente_export.columns):
+                max_len = max(df_por_cliente_export[col].astype(str).map(len).max(), len(col)) + 2
+                ws.set_column(i, i, min(max_len, 40))
+        
+        buffer_cli.seek(0)
+        
+        st.download_button(
+            label="📥 Baixar resumo por cliente (XLSX)",
+            data=buffer_cli.getvalue(),
+            file_name="clientes_slots_resumo.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
 
 # ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
