@@ -439,20 +439,25 @@ else:
 # ─────────────────────────────────────────────────────────
 st.markdown("### 👥 Distribuição de slots por cliente")
 
-# Agora já temos a coluna ClienteFull criada no carregamento
 if "ClienteFull" not in df_filtrado.columns:
     st.info("Nenhuma coluna de cliente disponível para esta análise.")
 else:
-    # total de slots por cliente no período filtrado
+    # 🔁 GARANTIR que os slots estejam calculados com a mesma regra usada no resto do app
+    if "slots_por_venda" not in df_filtrado.columns or "slots_total" not in df_filtrado.columns:
+        df_filtrado["slots_por_venda"] = df_filtrado["Descrição"].apply(extract_slots)
+        df_filtrado["slots_total"] = df_filtrado["slots_por_venda"] * df_filtrado["Quantidade"]
+
+    # total de slots / vendas / receita por cliente
     df_por_cliente = (
         df_filtrado
         .groupby("ClienteFull", as_index=False)
         .agg(
-            total_slots=("slots_total", "sum"),
-            total_vendas=("Valor", "sum"),
-            num_vendas=("slots_total", "size"),
+            total_slots=("slots_total", "sum"),   # ← soma dos slots (avulsa=1, mensal=4, tri=12, sem=24, pacotes etc.)
+            total_vendas=("Valor", "sum"),       # R$ por cliente
+            num_vendas=("Valor", "size"),        # quantidade de linhas (vendas) no relatório
         )
     )
+
 
     # distribuição: quantos clientes compraram 1, 2, 3... slots
     dist_slots = (
@@ -484,10 +489,9 @@ else:
         st.markdown("#### 📋 Tabela de distribuição")
         st.dataframe(dist_slots, use_container_width=True)
         import io
-
-        st.markdown("#### ⬇️ Baixar resumo de clientes (Excel)")
         
-        # ordena por slots (maior para menor) para facilitar análise
+        st.markdown("#### ⬇️ Baixar resumo por cliente (Excel)")
+        
         df_por_cliente_export = df_por_cliente.sort_values(
             "total_slots", ascending=False
         ).reset_index(drop=True)
@@ -496,13 +500,18 @@ else:
         with pd.ExcelWriter(buffer_cli, engine="xlsxwriter") as writer:
             df_por_cliente_export.to_excel(writer, index=False, sheet_name="Clientes")
             ws = writer.sheets["Clientes"]
-        
-            # ajustar largura das colunas
             for i, col in enumerate(df_por_cliente_export.columns):
                 max_len = max(df_por_cliente_export[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(i, i, min(max_len, 40))
         
         buffer_cli.seek(0)
+        
+        st.download_button(
+            label="📥 Baixar resumo por cliente (XLSX)",
+            data=buffer_cli.getvalue(),
+            file_name="clientes_slots_resumo.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         
         st.download_button(
             label="📥 Baixar resumo por cliente (XLSX)",
