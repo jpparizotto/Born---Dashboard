@@ -109,6 +109,22 @@ def carregar_e_processar(arquivo):
     )
 
     return df_valid, daily_full
+def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
+    """Tenta descobrir automaticamente qual coluna é o nome do cliente."""
+    candidatos = [
+        "Cliente",
+        "Aluno",
+        "Aluno/Cliente",
+        "Nome do aluno",
+        "Nome do Aluno",
+        "Nome do cliente",
+        "Nome Cliente",
+        "Pessoa",
+    ]
+    for c in candidatos:
+        if c in df.columns:
+            return c
+    return None
 
 # ─────────────────────────────────────────────────────────
 # PROCESSAMENTO E FILTROS
@@ -398,6 +414,58 @@ else:
 
     # 👇 AQUI ENTRA A CORREÇÃO: key única
     st.plotly_chart(fig_pizza, use_container_width=True, key="pizza_slots_produto")
+
+# ─────────────────────────────────────────────────────────
+# DISTRIBUIÇÃO DE SLOTS POR CLIENTE
+# ─────────────────────────────────────────────────────────
+st.markdown("### 👥 Distribuição de slots por cliente")
+
+col_cliente = detectar_coluna_cliente(df_filtrado)
+
+if not col_cliente:
+    st.info(
+        "Não consegui identificar automaticamente a coluna de cliente "
+        "(ex.: 'Cliente', 'Aluno'). Confere se o relatório do EVO tem uma dessas colunas."
+    )
+else:
+    # total de slots por cliente no período filtrado
+    df_por_cliente = (
+        df_filtrado
+        .groupby(col_cliente, as_index=False)
+        .agg(total_slots=("slots_total", "sum"))
+    )
+
+    # distribuição: quantos clientes compraram 1, 2, 3... slots
+    dist_slots = (
+        df_por_cliente
+        .groupby("total_slots", as_index=False)
+        .agg(qtd_clientes=("total_slots", "size"))
+        .sort_values("total_slots")
+    )
+
+    if dist_slots.empty:
+        st.info("Não há slots vendidos no período/seleção atual para montar a distribuição por cliente.")
+    else:
+        fig_dist = px.bar(
+            dist_slots,
+            x="total_slots",
+            y="qtd_clientes",
+            labels={
+                "total_slots": "Slots comprados no período",
+                "qtd_clientes": "Número de clientes",
+            },
+            text="qtd_clientes",
+            title="Distribuição de clientes por quantidade de slots comprados",
+        )
+        # mostrar o número acima da barra e um tick por inteiro no eixo X
+        fig_dist.update_traces(textposition="outside")
+        fig_dist.update_layout(xaxis=dict(dtick=1))
+
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+        # opcional: mostrar a tabela embaixo
+        st.markdown("#### 📋 Tabela de distribuição")
+        st.dataframe(dist_slots, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────
 # TABELA DIÁRIA CONSOLIDADA
