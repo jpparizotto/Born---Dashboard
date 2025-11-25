@@ -573,13 +573,6 @@ else:
             data=buffer_cli.getvalue(),
             file_name="clientes_slots_resumo.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        
-        st.download_button(
-            label="📥 Baixar resumo por cliente (XLSX)",
-            data=buffer_cli.getvalue(),
-            file_name="clientes_slots_resumo.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_clientes_resumo",   # 👈 chave única
         )
 
