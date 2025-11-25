@@ -131,28 +131,28 @@ def detectar_coluna_cliente(df: pd.DataFrame) -> str | None:
 # ─────────────────────────────────────────────────────────
 try:
     df_base, daily_full = carregar_e_processar(uploaded_file)
+
     # Criar coluna ClienteFull = Nome + Sobrenome
     cols = df_base.columns.str.lower()
-    
-    if "nome" in cols and "sobrenome" in cols:
+
+    if ("nome" in cols) and ("sobrenome" in cols):
         col_nome = df_base.columns[cols == "nome"][0]
         col_sobrenome = df_base.columns[cols == "sobrenome"][0]
-    
+
         df_base["ClienteFull"] = (
             df_base[col_nome].fillna("").astype(str).str.strip() + " " +
             df_base[col_sobrenome].fillna("").astype(str).str.strip()
         ).str.strip()
-    
-        # Padronizar (primeira letra maiúscula)
+
         df_base["ClienteFull"] = df_base["ClienteFull"].str.title()
-else:
-    st.error("As colunas 'Nome' e 'Sobrenome' não foram encontradas no arquivo.")
-    st.stop()
+
+    else:
+        st.error("As colunas 'Nome' e 'Sobrenome' não foram encontradas no arquivo.")
+        st.stop()
 
 except Exception as e:
     st.error(f"Erro ao processar o arquivo: {e}")
     st.stop()
-
 
 # --- Filtros (sidebar) ---
 st.sidebar.header("Filtros — Métricas de Vendas")
