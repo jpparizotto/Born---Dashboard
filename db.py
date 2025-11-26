@@ -15,7 +15,25 @@ import requests
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "bts_clients.db"
+GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
+def _github_headers():
+    if not GITHUB_TOKEN:
+        return None
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _github_file_url(path_in_repo: str) -> str:
+    if not GITHUB_OWNER or not GITHUB_REPO:
+        raise RuntimeError("GITHUB_OWNER e GITHUB_REPO não configurados")
+    return f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{path_in_repo}"
 
 # ---------------------------------------------------------------------------
 # Conexão / inicialização
@@ -79,12 +97,123 @@ def init_db_if_needed() -> None:
     conn.commit()
     conn.close()
 
+def _upload_bytes_to_github(path_in_repo: str, content: bytes, message: str) -> None:
+    """
+    Cria/atualiza um arquivo no GitHub usando a API de contents.
+    Não levanta erro para não derrubar a app se falhar.
+    """
+    headers = _github_headers()
+    if not headers:
+        # Se não tiver token configurado, não faz nada.
+        print("[backup_db_to_github] GITHUB_TOKEN não configurado, ignorando backup.")
+        return
+
+    url = _github_file_url(path_in_repo)
+
+    try:
+        # Descobre se já existe para pegar o sha
+        resp = requests.get(url, headers=headers, timeout=10)
+        sha = resp.json().get("sha") if resp.status_code == 200 else None
+
+        data = {
+            "message": message,
+            "content": base64.b64encode(content).decode("utf-8"),
+            "branch": GITHUB_BRANCH,
+        }
+        if sha:
+            data["sha"] = sha
+
+        put_resp = requests.put(url, headers=headers, json=data, timeout=10)
+        put_resp.raise_for_status()
+    except Exception as e:
+        # Log simples – não quebra a app
+        print(f"[backup_db_to_github] Erro ao subir {path_in_repo}: {e}")
+        
+def backup_db_to_github() -> None:
+    """
+    Exporta as tabelas principais para CSV e envia para o GitHub.
+
+    Arquivos criados no repositório:
+      - backups/clients.csv
+      - backups/level_history.csv
+      - backups/daily_clients.csv
+    """
+    headers = _github_headers()
+    if not headers:
+        # Se não tiver token, simplesmente não faz backup
+        return
+
+    try:
+        conn = get_connection()
+
+        for table in ["clients", "level_history", "daily_clients"]:
+            try:
+                df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+            except Exception as e:
+                print(f"[backup_db_to_github] Não foi possível ler tabela {table}: {e}")
+                continue
+
+            csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+            path_repo = f"backups/{table}.csv"
+            msg = f"Snapshot automático da tabela {table}"
+            _upload_bytes_to_github(path_repo, csv_bytes, msg)
+
+        print("[backup_db_to_github] Backup concluído.")
+        
+    except Exception as e:
+        print("[backup_db_to_github] Erro geral ao fazer backup:", e)
 
 def wipe_db() -> None:
     """Apaga completamente o banco (usado só manualmente / debug)."""
     if DB_PATH.exists():
         DB_PATH.unlink()
 
+def restore_db_from_github() -> int:
+    """
+    Apaga o arquivo data/bts_clients.db (se existir) e recria as tabelas
+    carregando os dados dos CSVs armazenados em:
+
+      backups/clients.csv
+      backups/level_history.csv
+      backups/daily_clients.csv
+
+    Retorna o número total de linhas importadas.
+    """
+    if not GITHUB_OWNER or not GITHUB_REPO:
+        raise RuntimeError("GITHUB_OWNER e GITHUB_REPO não configurados.")
+
+    # Apaga o DB atual (se existir)
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+
+    # Cria o arquivo e as tabelas vazias
+    init_db_if_needed()
+    conn = get_connection()
+
+    base_raw = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}/backups"
+    total_rows = 0
+
+    for table in ["clients", "level_history", "daily_clients"]:
+        url = f"{base_raw}/{table}.csv"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                print(f"[restore_db_from_github] CSV de {table} não encontrado ({resp.status_code}).")
+                continue
+
+            csv_text = resp.text
+            df = pd.read_csv(io.StringIO(csv_text))
+            if not df.empty:
+                df.to_sql(table, conn, if_exists="append", index=False)
+                total_rows += len(df)
+                print(f"[restore_db_from_github] Importadas {len(df)} linhas em {table}.")
+        except Exception as e:
+            print(f"[restore_db_from_github] Erro ao restaurar {table}: {e}")
+
+    conn.commit()
+    conn.close()
+
+    return total_rows
 
 # ---------------------------------------------------------------------------
 # Regras de nível
@@ -257,6 +386,12 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
 
     conn.commit()
     conn.close()
+    # Depois de sincronizar tudo, faz backup no GitHub (se configurado)
+    try:
+        backup_db_to_github()
+    except Exception as e:
+        print("[sync_clients_from_df] Falha ao fazer backup:", e)
+
     return processed
 
 # ---------------------------------------------------------------------------
@@ -317,7 +452,12 @@ def register_daily_client_count(total_clientes: int) -> None:
 
     conn.commit()
     conn.close()
-
+    # Faz backup também, para registrar a série histórica de clientes/dia
+    try:
+        backup_db_to_github()
+    except Exception as e:
+        print("[register_daily_client_count] Falha ao fazer backup:", e)
+        
 def load_daily_client_counts() -> pd.DataFrame:
     """
     Retorna DataFrame com:
