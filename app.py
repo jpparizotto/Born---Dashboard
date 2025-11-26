@@ -101,6 +101,11 @@ evolucao_nivel_page = st.Page(
 )
 wipe_db_page = st.Page("pages/99_Wipe_DB.py", title="Wipe DB", icon="🧹")
 
+restore_db_page = st.Page(
+    "pages/98_Restaurar_DB_de_Backup.py",
+    title="Restaurar DB (GitHub)",
+    icon="💾",
+)
 # Se quiser, depois você pode incluir outros módulos aqui, ex:
 # metricas_vendas_page = st.Page("pages/Métricas_Vendas", title="Métricas de Vendas", icon="💰")
 
@@ -112,6 +117,7 @@ if st.session_state.role == "admin":
         dashboard_page,
         base_clientes_page,
         evolucao_nivel_page,
+        restore_db_page,
         wipe_db_page,
     ]
 elif st.session_state.role == "coach":
