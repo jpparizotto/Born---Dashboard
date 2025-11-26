@@ -235,16 +235,31 @@ else:
         st.metric("Professores envolvidos", df_filtrado["professor"].nunique())
 
     # Acidentes por dia
-    acidentes_por_dia = df_filtrado.groupby("data").size().reset_index(name="qtd")
-    if not acidentes_por_dia.empty:
-        fig_dia = px.line(
+    # Acidentes por dia (incluindo dias com 0 acidentes)
+    if not df_filtrado.empty:
+        # intervalo completo entre a menor e a maior data filtradas
+        data_min = df_filtrado["data"].min()
+        data_max = df_filtrado["data"].max()
+        idx = pd.date_range(start=data_min, end=data_max, freq="D")
+    
+        # conta acidentes por dia e reindexa para todas as datas
+        acidentes_por_dia = (
+            df_filtrado.groupby("data")
+            .size()
+            .rename("qtd")
+            .reindex(idx, fill_value=0)
+            .reset_index()
+            .rename(columns={"index": "data"})
+        )
+    
+        fig_dia = px.bar(
             acidentes_por_dia,
             x="data",
             y="qtd",
-            markers=True,
-            title="Acidentes por dia"
+            title="Acidentes por dia",
         )
         st.plotly_chart(fig_dia, use_container_width=True)
+
 
     cols_grafs = st.columns(3)
 
