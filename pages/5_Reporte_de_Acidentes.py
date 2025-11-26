@@ -76,7 +76,6 @@ with st.expander("ℹ️ Como usar este módulo", expanded=False):
         """
         **Registro de novos acidentes**
         - Preencha o formulário abaixo sempre que houver um incidente em aula.
-        - Para digitalizar relatórios antigos em papel, basta lançar usando a data e horário do acidente original.
 
         **Exportação / backup**
         - Todos os registros ficam salvos no arquivo `data/acidentes.csv` (separador `;`).
