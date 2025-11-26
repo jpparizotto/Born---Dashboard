@@ -117,6 +117,12 @@ metricas_vendas_page = st.Page(
     icon="📗",
 )
 
+reporte_acidentes_page = st.Page(
+    "pages/5_Reporte_de_Acidentes.py",
+    title="Reporte de Acidentes",
+    icon="⚠️",
+)
+
 restore_db_page = st.Page(
     "pages/98_Restaurar_DB_de_Backup.py",
     title="Restaurar DB (GitHub)",
@@ -137,8 +143,9 @@ if st.session_state.role == "admin":
         dashboard_page,
         base_clientes_page,
         evolucao_nivel_page,
+        reporte_acidentes_page,  
         metricas_vendas_page,
-        restore_db_page,  # 💾 nova página
+        restore_db_page, 
         wipe_db_page,
     ]
 
@@ -146,6 +153,7 @@ elif st.session_state.role == "coach":
     pages_for_role = [
         base_clientes_page,
         evolucao_nivel_page,
+        reporte_acidentes_page, 
     ]
 
 else:
