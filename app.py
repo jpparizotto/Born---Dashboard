@@ -91,43 +91,64 @@ with st.sidebar:
 # Definição das páginas de acordo com o perfil
 # ─────────────────────────────────────────────────────────────
 # Importante: usar st.Page + st.navigation faz o Streamlit
-# IGNORAR automaticamente o diretório pages/ como menu padrão.
-dashboard_page = st.Page("dashboard.py", title="Dashboard", icon="📊")
+# ignorar automaticamente o diretório pages/ como menu padrão.
+
+dashboard_page = st.Page(
+    "dashboard.py",
+    title="Dashboard",
+    icon="📊",
+)
+
 base_clientes_page = st.Page(
-    "pages/2_Base_de_Clientes.py", title="Base de Clientes", icon="👥"
+    "pages/2_Base_de_Clientes.py",
+    title="Base de Clientes",
+    icon="👥",
 )
+
 evolucao_nivel_page = st.Page(
-    "pages/3_Evolucao_de_Nivel.py", title="Evolução de Nível", icon="📈"
+    "pages/3_Evolucao_de_Nivel.py",
+    title="Evolução de Nível",
+    icon="📈",
 )
-wipe_db_page = st.Page("pages/99_Wipe_DB.py", title="Wipe DB", icon="🧹")
+
+metricas_vendas_page = st.Page(
+    "pages/4_Metricas_Vendas.py",
+    title="Métricas de Vendas",
+    icon="📗",
+)
 
 restore_db_page = st.Page(
     "pages/98_Restaurar_DB_de_Backup.py",
     title="Restaurar DB (GitHub)",
     icon="💾",
 )
-# Se quiser, depois você pode incluir outros módulos aqui, ex:
-# metricas_vendas_page = st.Page("pages/Métricas_Vendas", title="Métricas de Vendas", icon="💰")
 
+wipe_db_page = st.Page(
+    "pages/99_Wipe_DB.py",
+    title="Wipe DB",
+    icon="🧹",
+)
+
+# Lista de páginas conforme o papel do usuário
 pages_for_role = []
 
 if st.session_state.role == "admin":
-    # Admin vê tudo
     pages_for_role = [
         dashboard_page,
         base_clientes_page,
         evolucao_nivel_page,
-        restore_db_page,
+        metricas_vendas_page,
+        restore_db_page,  # 💾 nova página
         wipe_db_page,
     ]
+
 elif st.session_state.role == "coach":
-    # Isabella vê só o que você pediu
     pages_for_role = [
         base_clientes_page,
         evolucao_nivel_page,
     ]
+
 else:
-    # Qualquer outro perfil (se aparecer) não vê nada de sensível
     st.error("Perfil sem páginas configuradas. Fale com a administração.")
     st.stop()
 
