@@ -7,6 +7,9 @@ from pathlib import Path
 from datetime import date
 
 import pandas as pd
+import base64
+import io
+import requests
 
 # Caminho do banco
 DATA_DIR = Path("data")
