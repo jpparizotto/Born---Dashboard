@@ -890,6 +890,30 @@ with kpi4: _kpi_block("Vagas livres", f"{total_free}")
 
 
 st.divider()
+# ──────────────────────────────────────────────────────────────────────────────
+# Agregação diária (usada nos gráficos de dia)
+# ──────────────────────────────────────────────────────────────────────────────
+grp_day = df.groupby("Data", as_index=False).agg(
+    Vagas=("Capacidade", "sum"),
+    Bookados=("Bookados", "sum"),
+    Slots=("Horario", "count"),
+)
+
+grp_day["Ocupacao%"] = (
+    grp_day["Bookados"] / grp_day["Vagas"] * 100
+).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
+
+# Dia da semana em português (para hover)
+dias_semana = {
+    0: "Segunda-feira",
+    1: "Terça-feira",
+    2: "Quarta-feira",
+    3: "Quinta-feira",
+    4: "Sexta-feira",
+    5: "Sábado",
+    6: "Domingo",
+}
+grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(dias_semana)
 
 # Criar gráfico com hover personalizado + número em cima da barra
 fig1 = px.bar(
@@ -1168,6 +1192,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
