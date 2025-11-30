@@ -678,11 +678,17 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
         z_val = {"Ocupacao%": occ, "VagasSobrando": sobr, "Vagas": vagas}.get(color_metric, slots)
         z[wi][wd] = float(z_val)
 
+        # Formatar data como 01/12/2025
+        data_str = r["Data"].strftime("%d/%m/%Y") if isinstance(r["Data"], (date, datetime)) else str(r["Data"])
+
+        # Se tiver mais de 10 vagas sobrando, mostra +10
+        sobr_display = "+10" if sobr > 10 else str(sobr)
+
         if show_values_in_cell:
-            # 👉 Agora mostramos APENAS o número de vagas sobrando no dia
-            text[wi][wd] = f"{sobr}"
+            # Linha 1: data completa | Linha 2: vagas sobrando (ou +10)
+            text[wi][wd] = f"{data_str}\n{sobr_display}"
         else:
-            # fallback: só o número do dia (se um dia você quiser voltar a usar)
+            # fallback: só o número do dia
             text[wi][wd] = str(int(r["day_num"]))
 
         custom[wi][wd] = {
@@ -1192,6 +1198,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
