@@ -732,7 +732,7 @@ def make_calendar_figure(
         )
     )
 
-    # Anotações: "Vagas: X" no meio + data no canto inferior direito
+    # Anotações: "Vagas: X" (maior) + data (menor) na mesma célula
     if show_values_in_cell:
         for _, r in cal.iterrows():
             wi = int(r["week_index"])
@@ -754,28 +754,19 @@ def make_calendar_figure(
                 is_dark = sobr > zmax * 0.6
             font_color = "white" if is_dark else "black"
 
-            # texto principal – centro da célula
+            # uma anotação só: Vagas (grande) + data (pequena)
             fig.add_annotation(
                 x=wd,
                 y=wi,
-                text=f"Vagas: {sobr_display}",
                 showarrow=False,
-                font=dict(size=14, color=font_color),
                 xanchor="center",
                 yanchor="middle",
-            )
-
-            # data – canto inferior direito
-            fig.add_annotation(
-                x=wd,
-                y=wi,
-                text=data_str,
-                showarrow=False,
-                font=dict(size=9, color=font_color),
-                xanchor="right",
-                yanchor="bottom",
-                xshift=4,
-                yshift=4,
+                align="center",
+                font=dict(size=14, color=font_color),
+                text=(
+                    f"Vagas: {sobr_display}"
+                    f"<br><span style='font-size:9px'>{data_str}</span>"
+                ),
             )
 
     fig.update_xaxes(
@@ -1267,6 +1258,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
