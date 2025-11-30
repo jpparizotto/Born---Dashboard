@@ -660,36 +660,37 @@ def _month_calendar_frame(daily: pd.DataFrame, year: int, month: int) -> pd.Data
         })
     return pd.DataFrame(rows)
 
-def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_metric: str, show_values_in_cell: bool = True) -> go.Figure:
+def make_calendar_figure(
+    daily_df: pd.DataFrame,
+    year: int,
+    month: int,
+    color_metric: str,
+    show_values_in_cell: bool = True
+) -> go.Figure:
     cal = _month_calendar_frame(daily_df, year, month)
     x_labels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
     max_week = cal["week_index"].max() if not cal.empty else 5
     n_weeks = int(max_week) + 1
 
+    # grade base
     z = [[None for _ in range(7)] for __ in range(n_weeks)]
-    text = [["" for _ in range(7)] for __ in range(n_weeks)]
     custom = [[None for _ in range(7)] for __ in range(n_weeks)]
 
     for _, r in cal.iterrows():
-        wi = int(r["week_index"]); wd = int(r["weekday"])
-        slots = int(r["Slots"]); vagas = int(r["Vagas"]); book = int(r["Bookados"])
-        occ = float(r["Ocupacao%"]); sobr = int(r["VagasSobrando"])
+        wi = int(r["week_index"])
+        wd = int(r["weekday"])
+        slots = int(r["Slots"])
+        vagas = int(r["Vagas"])
+        book = int(r["Bookados"])
+        occ = float(r["Ocupacao%"])
+        sobr = int(r["VagasSobrando"])
 
-        z_val = {"Ocupacao%": occ, "VagasSobrando": sobr, "Vagas": vagas}.get(color_metric, slots)
+        z_val = {
+            "Ocupacao%": occ,
+            "VagasSobrando": sobr,
+            "Vagas": vagas,
+        }.get(color_metric, slots)
         z[wi][wd] = float(z_val)
-
-        # Formatar data como 01/12/2025
-        data_str = r["Data"].strftime("%d/%m/%Y") if isinstance(r["Data"], (date, datetime)) else str(r["Data"])
-
-        # Se tiver mais de 10 vagas sobrando, mostra +10
-        sobr_display = "+10" if sobr > 10 else str(sobr)
-
-        if show_values_in_cell:
-            # Linha 1: data completa | Linha 2: vagas sobrando (ou +10)
-            text[wi][wd] = f"{data_str}\n{sobr_display}"
-        else:
-            # fallback: só o número do dia
-            text[wi][wd] = str(int(r["day_num"]))
 
         custom[wi][wd] = {
             "data": r["Data"],
@@ -700,6 +701,7 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
             "sobr": sobr,
         }
 
+    # cores
     if color_metric == "Ocupacao%":
         colorscale = "RdYlGn"; zmin, zmax = 0, 100; ctitle = "Ocupação %"
     elif color_metric == "VagasSobrando":
@@ -709,27 +711,94 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
     else:
         colorscale = "Oranges"; zmin, zmax = 0, max(1, cal["Slots"].max()); ctitle = "Slots"
 
-    font_size = max(9, 12 - max(0, n_weeks - 5) * 2)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=list(range(7)),
+            y=list(range(n_weeks)),
+            colorscale=colorscale,
+            zmin=zmin,
+            zmax=zmax,
+            showscale=True,
+            colorbar=dict(title=ctitle),
+            customdata=custom,
+            hovertemplate=(
+                "<b>%{customdata.data|%d/%m/%Y}</b><br>"
+                "Bookados: %{customdata.book}<br>"
+                "Vagas totais: %{customdata.vagas}<br>"
+                "Ocupação: %{customdata.occ:.1f}%<br>"
+                "Vagas sobrando: %{customdata.sobr}<extra></extra>"
+            ),
+        )
+    )
 
-    fig = go.Figure(data=go.Heatmap(
-        z=z, x=list(range(7)), y=list(range(n_weeks)),
-        colorscale=colorscale, zmin=zmin, zmax=zmax,
-        showscale=True, colorbar=dict(title=ctitle),
-        text=text, texttemplate="%{text}", textfont={"size": font_size},
-        customdata=custom,
-        hovertemplate=(
-            "<b>%{customdata.data|%d/%m/%Y}</b><br>"
-            "Bookados: %{customdata.book}<br>"
-            "Vagas totais: %{customdata.vagas}<br>"
-            "Ocupação: %{customdata.occ:.1f}%<br>"
-            "Vagas sobrando: %{customdata.sobr}<extra></extra>"
-        ),
-    ))
+    # Anotações: "Vagas: X" no meio + data no canto inferior direito
+    if show_values_in_cell:
+        for _, r in cal.iterrows():
+            wi = int(r["week_index"])
+            wd = int(r["weekday"])
+            sobr = int(r["VagasSobrando"])
+            data_val = r["Data"]
 
+            # display: +10 se passar de 10
+            sobr_display = "+10" if sobr > 10 else str(sobr)
+            data_str = (
+                data_val.strftime("%d/%m/%Y")
+                if isinstance(data_val, (date, datetime))
+                else str(data_val)
+            )
 
-    fig.update_xaxes(tickmode="array", tickvals=list(range(7)), ticktext=x_labels, side="top", showgrid=False)
-    fig.update_yaxes(tickmode="array", tickvals=list(range(n_weeks)), ticktext=[f"Semana {i+1}" for i in range(n_weeks)], autorange="reversed", showgrid=False)
-    fig.update_layout(title=f"Calendário — {pycal.month_name[month]} {year}", xaxis_title="", yaxis_title="", margin=dict(l=10, r=10, t=50, b=10), height=320 + 40 * n_weeks)
+            # tentar deixar texto claro em células mais escuras
+            is_dark = False
+            if zmax > 0:
+                is_dark = sobr > zmax * 0.6
+            font_color = "white" if is_dark else "black"
+
+            # texto principal – centro da célula
+            fig.add_annotation(
+                x=wd,
+                y=wi,
+                text=f"Vagas: {sobr_display}",
+                showarrow=False,
+                font=dict(size=14, color=font_color),
+                xanchor="center",
+                yanchor="middle",
+            )
+
+            # data – canto inferior direito
+            fig.add_annotation(
+                x=wd,
+                y=wi,
+                text=data_str,
+                showarrow=False,
+                font=dict(size=9, color=font_color),
+                xanchor="right",
+                yanchor="bottom",
+                xshift=4,
+                yshift=4,
+            )
+
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=list(range(7)),
+        ticktext=x_labels,
+        side="top",
+        showgrid=False,
+    )
+    fig.update_yaxes(
+        tickmode="array",
+        tickvals=list(range(n_weeks)),
+        ticktext=[f"Semana {i+1}" for i in range(n_weeks)],
+        autorange="reversed",
+        showgrid=False,
+    )
+    fig.update_layout(
+        title=f"Calendário — {pycal.month_name[month]} {year}",
+        xaxis_title="",
+        yaxis_title="",
+        margin=dict(l=10, r=10, t=50, b=10),
+        height=320 + 40 * n_weeks,
+    )
     return fig
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1198,6 +1267,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
