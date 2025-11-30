@@ -386,14 +386,12 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
 
     conn.commit()
     conn.close()
-    # Depois de sincronizar tudo, faz backup no GitHub (se configurado)
-    try:
-        backup_db_to_github()
-    except Exception as e:
-        print("[sync_clients_from_df] Falha ao fazer backup:", e)
+
+    # Backup manual: agora é feito via botão na página 98_Restaurar_DB_de_Backup
+    # (não fazemos mais backup automático aqui para evitar sobrescrever dados bons
+    # com estados intermediários ou ambientes vazios)
 
     return processed
-
 # ---------------------------------------------------------------------------
 # Snapshot diário de quantidade de clientes
 # ---------------------------------------------------------------------------
@@ -452,11 +450,9 @@ def register_daily_client_count(total_clientes: int) -> None:
 
     conn.commit()
     conn.close()
-    # Faz backup também, para registrar a série histórica de clientes/dia
-    try:
-        backup_db_to_github()
-    except Exception as e:
-        print("[register_daily_client_count] Falha ao fazer backup:", e)
+    # Não fazemos mais backup automático aqui.
+    # O snapshot diário continua sendo gravado na tabela daily_clients,
+    # mas o backup completo do banco é feito manualmente via botão.
         
 def load_daily_client_counts() -> pd.DataFrame:
     """
