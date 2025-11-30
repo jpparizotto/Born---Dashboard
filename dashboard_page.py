@@ -679,11 +679,20 @@ def make_calendar_figure(daily_df: pd.DataFrame, year: int, month: int, color_me
         z[wi][wd] = float(z_val)
 
         if show_values_in_cell:
-            text[wi][wd] = f"{int(r['day_num'])}\nB:{book} V:{vagas}\nOcc:{occ:.0f}% Sob:{sobr}"
+            # 👉 Agora mostramos APENAS o número de vagas sobrando no dia
+            text[wi][wd] = f"{sobr}"
         else:
+            # fallback: só o número do dia (se um dia você quiser voltar a usar)
             text[wi][wd] = str(int(r["day_num"]))
 
-        custom[wi][wd] = {"data": r["Data"], "slots": slots, "vagas": vagas, "book": book, "occ": occ, "sobr": sobr}
+        custom[wi][wd] = {
+            "data": r["Data"],
+            "slots": slots,
+            "vagas": vagas,
+            "book": book,
+            "occ": occ,
+            "sobr": sobr,
+        }
 
     if color_metric == "Ocupacao%":
         colorscale = "RdYlGn"; zmin, zmax = 0, 100; ctitle = "Ocupação %"
@@ -882,36 +891,28 @@ with kpi4: _kpi_block("Vagas livres", f"{total_free}")
 
 st.divider()
 
-# Gráfico — Ocupação por dia
-grp_day = df.groupby("Data", as_index=False).agg(
-    Vagas=("Capacidade", "sum"),
-    Bookados=("Bookados", "sum"),
-    Slots=("Horario", "count")
-)
-grp_day["Ocupacao%"] = (
-    grp_day["Bookados"] / grp_day["Vagas"] * 100
-).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
-
-# ➜ NOVO: adicionar coluna com nome do dia da semana (em português)
-dias_semana = {
-    0: "Segunda-feira", 1: "Terça-feira", 2: "Quarta-feira",
-    3: "Quinta-feira", 4: "Sexta-feira", 5: "Sábado", 6: "Domingo"
-}
-grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(dias_semana)
-
-# Criar gráfico com hover personalizado
+# Criar gráfico com hover personalizado + número em cima da barra
 fig1 = px.bar(
     grp_day.sort_values("Data"),
     x="Data",
     y="Ocupacao%",
     title="Ocupação por Dia",
-    labels={"Ocupacao%": "Ocupação (%)", "Data": "Data"}
+    labels={"Ocupacao%": "Ocupação (%)", "Data": "Data"},
+    text="Ocupacao%",  # ➜ texto = ocupação
 )
 
-# ➜ Personalizar hover para incluir o dia da semana
 fig1.update_traces(
+    texttemplate="%{text:.1f}%",     # ex: 83.5%
+    textposition="outside",          # número em cima da barra
     hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Ocupação: %{y:.1f}%<extra></extra>",
-    customdata=np.stack([grp_day["DiaSemana"]], axis=-1)
+    customdata=np.stack([grp_day["DiaSemana"]], axis=-1),
+)
+
+fig1.update_layout(
+    yaxis_title="Ocupação (%)",
+    margin=dict(t=60, b=40),
+    uniformtext_minsize=8,
+    uniformtext_mode="hide",
 )
 
 st.plotly_chart(fig1, use_container_width=True)
@@ -944,12 +945,63 @@ fig1b.update_layout(
 
 st.plotly_chart(fig1b, use_container_width=True)
 
+# Gráfico — Vagas sobrando por dia (capacidade - bookados)
+grp_day["VagasSobrando"] = (grp_day["Vagas"] - grp_day["Bookados"]).clip(lower=0).astype(int)
+
+fig1c = px.bar(
+    grp_day.sort_values("Data"),
+    x="Data",
+    y="VagasSobrando",
+    title="Vagas sobrando por dia",
+    labels={"VagasSobrando": "Vagas sobrando", "Data": "Data"},
+    text="VagasSobrando",  # ➜ mostra o valor no topo da barra
+)
+
+fig1c.update_traces(
+    texttemplate="%{text:d}",
+    textposition="outside",  # coloca acima da barra
+    hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Vagas sobrando: %{y:d}<extra></extra>",
+    customdata=np.stack([grp_day["DiaSemana"]], axis=-1),
+)
+
+fig1c.update_layout(
+    uniformtext_minsize=8,
+    uniformtext_mode="hide",
+    yaxis_title="Vagas sobrando",
+    margin=dict(t=60, b=40),
+)
+
+st.plotly_chart(fig1c, use_container_width=True)
 
 # Gráfico — Ocupação por modalidade
-grp_mod = df.groupby("Atividade", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
+grp_mod = df.groupby("Atividade", as_index=False).agg(
+    Vagas=("Capacidade", "sum"),
+    Bookados=("Bookados", "sum"),
+    Slots=("Horario", "count")
+)
 grp_mod["Ocupacao%"] = (grp_mod["Bookados"] / grp_mod["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
-fig2 = px.bar(grp_mod.sort_values("Ocupacao%", ascending=False), x="Atividade", y="Ocupacao%", title="Ocupação por Modalidade", labels={"Ocupacao%": "Ocupação (%)", "Atividade": "Modalidade"})
+
+fig2 = px.bar(
+    grp_mod.sort_values("Ocupacao%", ascending=False),
+    x="Atividade",
+    y="Ocupacao%",
+    title="Ocupação por Modalidade",
+    labels={"Ocupacao%": "Ocupação (%)", "Atividade": "Modalidade"},
+    text="Ocupacao%",  # ➜ número em cima da barra
+)
+
+fig2.update_traces(
+    texttemplate="%{text:.1f}%",
+    textposition="outside",
+)
+
+fig2.update_layout(
+    yaxis_title="Ocupação (%)",
+    margin=dict(t=60, b=80),
+)
+
 st.plotly_chart(fig2, width="stretch")
+
 
 # Gráfico — Ocupação por período
 grp_per = df.groupby("Periodo", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
@@ -1013,16 +1065,30 @@ else:
 
     month_labels = [f"{pycal.month_name[m.month]} {m.year}" for m in months_list]
     idx_default = len(months_list) - 1
-    sel = st.selectbox("Selecione o mês", options=list(range(len(months_list))), format_func=lambda i: month_labels[i], index=idx_default)
-    color_metric = st.radio("Métrica (cor) do calendário", options=["Ocupacao%", "Slots", "Vagas", "VagasSobrando"], horizontal=True, index=0)
-    show_values_in_cell = st.checkbox("Mostrar números no calendário", value=True)
+    sel = st.selectbox(
+        "Selecione o mês",
+        options=list(range(len(months_list))),
+        format_func=lambda i: month_labels[i],
+        index=idx_default,
+    )
+
+    st.caption("Cada quadradinho mostra o número de vagas sobrando em cada dia.")
 
     sel_month = months_list[sel]
     dmin = sel_month
     dmax = sel_month.replace(day=pycal.monthrange(sel_month.year, sel_month.month)[1])
     daily_month = daily[(daily["Data"] >= dmin) & (daily["Data"] <= dmax)].copy()
-    fig_cal = make_calendar_figure(daily_month, sel_month.year, sel_month.month, color_metric, show_values_in_cell=show_values_in_cell)
+
+    # 👉 Calendário fixo em 'VagasSobrando' e sempre com número na célula
+    fig_cal = make_calendar_figure(
+        daily_month,
+        sel_month.year,
+        sel_month.month,
+        color_metric="VagasSobrando",
+        show_values_in_cell=True,
+    )
     st.plotly_chart(fig_cal, width="stretch")
+
 
 st.divider()
 
@@ -1102,6 +1168,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
