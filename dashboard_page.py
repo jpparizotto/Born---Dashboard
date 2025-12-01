@@ -710,9 +710,16 @@ def make_calendar_figure(
     if color_metric == "Ocupacao%":
         colorscale = "RdYlGn"; zmin, zmax = 0, 100; ctitle = "Ocupação %"
     elif color_metric == "VagasSobrando":
-        colorscale = "Blues"
-        zmin, zmax = 0, 10   # escala fixa até 10
+        zmin, zmax = 0, 10
         ctitle = "Vagas sobrando"
+    
+        # Escala azul clara
+        colorscale = [
+            [0.0,   "#ffffff"],
+            [0.3,   "#d6eaff"],
+            [0.6,   "#83c5f7"],
+            [1.0,   "#4ba3e6"],
+        ]
     elif color_metric == "Vagas":
         colorscale = "Greens"; zmin, zmax = 0, max(1, cal["Vagas"].max()); ctitle = "Vagas"
     else:
@@ -800,9 +807,10 @@ def make_calendar_figure(
     fig.update_yaxes(
         tickmode="array",
         tickvals=list(range(n_weeks)),
-        ticktext=[f"Semana {i+1}" for i in range(n_weeks)],
+        ticktext=[""] * n_weeks,   # sem texto
         autorange="reversed",
         showgrid=False,
+        showticklabels=False,      # remove completamente
     )
     fig.update_layout(
         title=f"Calendário — {pycal.month_name[month]} {year}",
@@ -1290,6 +1298,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
