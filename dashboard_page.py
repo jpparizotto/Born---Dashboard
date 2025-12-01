@@ -732,8 +732,19 @@ def make_calendar_figure(
         )
     )
 
-    # Anotações: "Vagas: X" (maior) + data (menor) na mesma célula
+    # Anotações: número de vagas (maior) + data curta (menor)
     if show_values_in_cell:
+        # mapa de dia da semana curto em PT-BR
+        dias_semana_curto = {
+            0: "SEG",
+            1: "TER",
+            2: "QUA",
+            3: "QUI",
+            4: "SEX",
+            5: "SAB",
+            6: "DOM",
+        }
+
         for _, r in cal.iterrows():
             wi = int(r["week_index"])
             wd = int(r["weekday"])
@@ -742,11 +753,14 @@ def make_calendar_figure(
 
             # display: +10 se passar de 10
             sobr_display = "+10" if sobr > 10 else str(sobr)
-            data_str = (
-                data_val.strftime("%d/%m/%Y")
-                if isinstance(data_val, (date, datetime))
-                else str(data_val)
-            )
+
+            if isinstance(data_val, (date, datetime)):
+                dow = data_val.weekday()  # 0 = seg
+                dow_str = dias_semana_curto.get(dow, "")
+                date_str = data_val.strftime("%d/%m") + f" - {dow_str}"
+            else:
+                # fallback, caso venha string
+                date_str = str(data_val)
 
             # tentar deixar texto claro em células mais escuras
             is_dark = False
@@ -754,7 +768,7 @@ def make_calendar_figure(
                 is_dark = sobr > zmax * 0.6
             font_color = "white" if is_dark else "black"
 
-            # uma anotação só: Vagas (grande) + data (pequena)
+            # uma anotação só: número grande + data pequena logo abaixo
             fig.add_annotation(
                 x=wd,
                 y=wi,
@@ -764,8 +778,8 @@ def make_calendar_figure(
                 align="center",
                 font=dict(size=14, color=font_color),
                 text=(
-                    f"Vagas: {sobr_display}"
-                    f"<br><span style='font-size:9px'>{data_str}</span>"
+                    f"{sobr_display}"
+                    f"<br><span style='font-size:9px'>{date_str}</span>"
                 ),
             )
 
@@ -1144,8 +1158,19 @@ daily = _daily_agg(df)
 if daily.empty:
     st.info("Sem dados para montar o calendário no período selecionado.")
 else:
-    min_m = daily["Data"].min().replace(day=1)
-    max_m = daily["Data"].max().replace(day=1)
+    # Sempre olhar 30 dias pra frente, a partir de hoje
+    hoje = date.today()
+    limite = hoje + timedelta(days=30)
+
+    daily_fut = daily[(daily["Data"] >= hoje) & (daily["Data"] <= limite)].copy()
+
+    # fallback: se não houver dados nesse intervalo (ex.: só histórico),
+    # usa o comportamento antigo com todo o "daily"
+    if daily_fut.empty:
+        daily_fut = daily.copy()
+
+    min_m = daily_fut["Data"].min().replace(day=1)
+    max_m = daily_fut["Data"].max().replace(day=1)
     months_list = []
     cur = min_m
     while cur <= max_m:
@@ -1154,7 +1179,7 @@ else:
         cur = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
 
     month_labels = [f"{pycal.month_name[m.month]} {m.year}" for m in months_list]
-    idx_default = len(months_list) - 1
+    idx_default = 0  # começa no primeiro mês do intervalo futuro
     sel = st.selectbox(
         "Selecione o mês",
         options=list(range(len(months_list))),
@@ -1162,14 +1187,13 @@ else:
         index=idx_default,
     )
 
-    st.caption("Cada quadradinho mostra o número de vagas sobrando em cada dia.")
+    st.caption("Cada quadradinho mostra o número de vagas sobrando em cada dia (próximos 30 dias).")
 
     sel_month = months_list[sel]
     dmin = sel_month
     dmax = sel_month.replace(day=pycal.monthrange(sel_month.year, sel_month.month)[1])
-    daily_month = daily[(daily["Data"] >= dmin) & (daily["Data"] <= dmax)].copy()
+    daily_month = daily_fut[(daily_fut["Data"] >= dmin) & (daily_fut["Data"] <= dmax)].copy()
 
-    # 👉 Calendário fixo em 'VagasSobrando' e sempre com número na célula
     fig_cal = make_calendar_figure(
         daily_month,
         sel_month.year,
@@ -1178,6 +1202,7 @@ else:
         show_values_in_cell=True,
     )
     st.plotly_chart(fig_cal, width="stretch")
+
 
 
 st.divider()
@@ -1258,6 +1283,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
