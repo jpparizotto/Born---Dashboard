@@ -746,19 +746,8 @@ def make_calendar_figure(
         )
     )
 
-    # Anotações: número de vagas (maior) + data curta (menor)
+    # Anotações: número de vagas (maior) + data (DD/MM) logo abaixo
     if show_values_in_cell:
-        # mapa de dia da semana curto em PT-BR
-        dias_semana_curto = {
-            0: "SEG",
-            1: "TER",
-            2: "QUA",
-            3: "QUI",
-            4: "SEX",
-            5: "SAB",
-            6: "DOM",
-        }
-
         for _, r in cal.iterrows():
             wi = int(r["week_index"])
             wd = int(r["weekday"])
@@ -768,12 +757,10 @@ def make_calendar_figure(
             # display: +10 se passar de 10
             sobr_display = "+10" if sobr > 10 else str(sobr)
 
+            # data só como DD/MM
             if isinstance(data_val, (date, datetime)):
-                dow = data_val.weekday()  # 0 = seg
-                dow_str = dias_semana_curto.get(dow, "")
-                date_str = data_val.strftime("%d/%m") + f" - {dow_str}"
+                date_str = data_val.strftime("%d/%m")
             else:
-                # fallback, caso venha string
                 date_str = str(data_val)
 
             # tentar deixar texto claro em células mais escuras
@@ -782,7 +769,7 @@ def make_calendar_figure(
                 is_dark = sobr > zmax * 0.6
             font_color = "white" if is_dark else "black"
 
-            # uma anotação só: número grande + data pequena logo abaixo
+            # uma anotação só: número grande + data menor logo abaixo
             fig.add_annotation(
                 x=wd,
                 y=wi,
@@ -790,10 +777,10 @@ def make_calendar_figure(
                 xanchor="center",
                 yanchor="middle",
                 align="center",
-                font=dict(size=14, color=font_color),
+                font=dict(size=18, color=font_color),  # número maior
                 text=(
                     f"{sobr_display}"
-                    f"<br><span style='font-size:9px'>{date_str}</span>"
+                    f"<br><span style='font-size:12px'>{date_str}</span>"  # data um pouco maior também
                 ),
             )
 
@@ -1298,6 +1285,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
