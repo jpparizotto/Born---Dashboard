@@ -685,11 +685,16 @@ def make_calendar_figure(
         occ = float(r["Ocupacao%"])
         sobr = int(r["VagasSobrando"])
 
-        z_val = {
-            "Ocupacao%": occ,
-            "VagasSobrando": sobr,
-            "Vagas": vagas,
-        }.get(color_metric, slots)
+        if color_metric == "VagasSobrando":
+            # limitar a cor: tudo acima de 10 vira 10
+            z_val = min(sobr, 10)
+        elif color_metric == "Vagas":
+            z_val = vagas
+        elif color_metric == "Ocupacao%":
+            z_val = occ
+        else:
+            z_val = slots
+        
         z[wi][wd] = float(z_val)
 
         custom[wi][wd] = {
@@ -705,7 +710,9 @@ def make_calendar_figure(
     if color_metric == "Ocupacao%":
         colorscale = "RdYlGn"; zmin, zmax = 0, 100; ctitle = "Ocupação %"
     elif color_metric == "VagasSobrando":
-        colorscale = "Blues"; zmin, zmax = 0, max(1, cal["VagasSobrando"].max()); ctitle = "Vagas sobrando"
+        colorscale = "Blues"
+        zmin, zmax = 0, 10   # escala fixa até 10
+        ctitle = "Vagas sobrando"
     elif color_metric == "Vagas":
         colorscale = "Greens"; zmin, zmax = 0, max(1, cal["Vagas"].max()); ctitle = "Vagas"
     else:
@@ -1283,6 +1290,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
