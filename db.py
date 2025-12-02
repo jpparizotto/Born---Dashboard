@@ -217,8 +217,8 @@ def restore_db_from_github() -> int:
 
 def backup_acidentes_to_github() -> None:
     """
-    Envia o arquivo data/acidentes.csv para o GitHub em backups/acidentes.csv.
-    Usa a mesma infraestrutura de upload do backup_db_to_github.
+    Faz backup do arquivo de acidentes (data/acidentes.csv) para o GitHub
+    em backups/acidentes.csv, usando a mesma infraestrutura de backup do DB.
     """
     from pathlib import Path
 
@@ -227,44 +227,65 @@ def backup_acidentes_to_github() -> None:
         print("[backup_acidentes_to_github] Arquivo de acidentes não encontrado, nada para fazer.")
         return
 
-    with csv_path.open("rb") as f:
-        content = f.read()
+    try:
+        with csv_path.open("rb") as f:
+            content = f.read()
 
-    # ⚠️ IMPORTANTE:
-    # Aqui você deve usar a MESMA função interna que o backup_db_to_github usa
-    # para mandar bytes para o GitHub.
-    #
-    # Se no seu código essa função tiver outro nome,
-    # troque "_upload_bytes_to_github" pelo nome correto.
-    from .github_utils import upload_bytes_to_github  # ajuste este import conforme seu projeto
-
-    upload_bytes_to_github(
-        repo_path="backups/acidentes.csv",
-        content=content,
-        commit_message="Backup acidentes.csv (reporte de acidentes)",
-    )
-
-    print("[backup_acidentes_to_github] Backup de acidentes enviado para GitHub.")
+        # Reaproveita o helper já usado no backup do banco
+        _upload_bytes_to_github(
+            "backups/acidentes.csv",
+            content,
+            "Snapshot automático do arquivo de acidentes.csv",
+        )
+        print("[backup_acidentes_to_github] Backup de acidentes concluído.")
+    except Exception as e:
+        print("[backup_acidentes_to_github] Erro ao fazer backup de acidentes:", e)
 
 
-def restore_acidentes_from_github() -> None:
+def restore_acidentes_from_github() -> int:
     """
-    Baixa backups/acidentes.csv do GitHub e sobrescreve data/acidentes.csv local.
+    Baixa backups/acidentes.csv do GitHub (branch configurada) e sobrescreve
+    data/acidentes.csv local.
+
+    Retorna o número de linhas restauradas (ou 0 em caso de erro).
     """
     from pathlib import Path
-    from .github_utils import download_bytes_from_github  # ajuste conforme seu projeto
 
-    content = download_bytes_from_github("backups/acidentes.csv")
+    if not GITHUB_OWNER or not GITHUB_REPO:
+        raise RuntimeError("GITHUB_OWNER e GITHUB_REPO não configurados.")
 
-    # Garante que a pasta data existe
-    csv_path = Path(ACCIDENTS_CSV_PATH)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    base_raw = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
+    url = f"{base_raw}/backups/acidentes.csv"
 
-    with csv_path.open("wb") as f:
-        f.write(content)
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            print(
+                f"[restore_acidentes_from_github] CSV de acidentes não encontrado "
+                f"({resp.status_code})."
+            )
+            return 0
 
-    print("[restore_acidentes_from_github] Arquivo de acidentes restaurado a partir do GitHub.")
+        content = resp.content
 
+        csv_path = Path(ACCIDENTS_CSV_PATH)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with csv_path.open("wb") as f:
+            f.write(content)
+
+        # Só pra ter um retorno informativo
+        try:
+            df = pd.read_csv(io.BytesIO(content), sep=";")
+            n_rows = len(df)
+        except Exception:
+            n_rows = 0
+
+        print(f"[restore_acidentes_from_github] Arquivo de acidentes restaurado ({n_rows} linhas).")
+        return n_rows
+    except Exception as e:
+        print(f"[restore_acidentes_from_github] Erro ao restaurar arquivo de acidentes:", e)
+        return 0
 
 # ---------------------------------------------------------------------------
 # Regras de nível
