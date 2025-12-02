@@ -787,9 +787,10 @@ def make_calendar_figure(
     fig.update_xaxes(
         tickmode="array",
         tickvals=list(range(7)),
-        ticktext=x_labels,
+        ticktext=[f"<b>{lbl}</b>" for lbl in x_labels],  # negrito
         side="top",
         showgrid=False,
+        tickfont=dict(size=16),  # aumenta a fonte
     )
     fig.update_yaxes(
         tickmode="array",
@@ -1285,6 +1286,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
