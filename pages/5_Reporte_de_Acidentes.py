@@ -8,6 +8,8 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 
+from db import backup_acidentes_to_github
+
 # ─────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────
@@ -156,7 +158,17 @@ with st.form("form_novo_acidente", clear_on_submit=True):
             }
             df = pd.concat([df, pd.DataFrame([novo_registro])], ignore_index=True)
             save_acidentes_df(df)
-            st.success("Reporte salvo com sucesso!")
+
+            # Tenta enviar backup para o GitHub também
+            try:
+                backup_acidentes_to_github()
+            except Exception as e:
+                # Não quebra o fluxo se o backup falhar – só avisa
+                st.warning(
+                    "Reporte salvo localmente, mas houve erro ao enviar o backup para o GitHub."
+                )
+            else:
+                st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
 
 # ─────────────────────────────────────────────────────────
 # FILTROS E VISUALIZAÇÃO DA BASE
