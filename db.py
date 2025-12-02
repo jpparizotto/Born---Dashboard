@@ -19,7 +19,7 @@ GITHUB_OWNER = os.environ.get("GITHUB_OWNER", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-
+ACCIDENTS_CSV_PATH = os.path.join(DATA_DIR, "acidentes.csv")
 def _github_headers():
     if not GITHUB_TOKEN:
         return None
@@ -214,6 +214,57 @@ def restore_db_from_github() -> int:
     conn.close()
 
     return total_rows
+
+def backup_acidentes_to_github() -> None:
+    """
+    Envia o arquivo data/acidentes.csv para o GitHub em backups/acidentes.csv.
+    Usa a mesma infraestrutura de upload do backup_db_to_github.
+    """
+    from pathlib import Path
+
+    csv_path = Path(ACCIDENTS_CSV_PATH)
+    if not csv_path.exists():
+        print("[backup_acidentes_to_github] Arquivo de acidentes não encontrado, nada para fazer.")
+        return
+
+    with csv_path.open("rb") as f:
+        content = f.read()
+
+    # ⚠️ IMPORTANTE:
+    # Aqui você deve usar a MESMA função interna que o backup_db_to_github usa
+    # para mandar bytes para o GitHub.
+    #
+    # Se no seu código essa função tiver outro nome,
+    # troque "_upload_bytes_to_github" pelo nome correto.
+    from .github_utils import upload_bytes_to_github  # ajuste este import conforme seu projeto
+
+    upload_bytes_to_github(
+        repo_path="backups/acidentes.csv",
+        content=content,
+        commit_message="Backup acidentes.csv (reporte de acidentes)",
+    )
+
+    print("[backup_acidentes_to_github] Backup de acidentes enviado para GitHub.")
+
+
+def restore_acidentes_from_github() -> None:
+    """
+    Baixa backups/acidentes.csv do GitHub e sobrescreve data/acidentes.csv local.
+    """
+    from pathlib import Path
+    from .github_utils import download_bytes_from_github  # ajuste conforme seu projeto
+
+    content = download_bytes_from_github("backups/acidentes.csv")
+
+    # Garante que a pasta data existe
+    csv_path = Path(ACCIDENTS_CSV_PATH)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with csv_path.open("wb") as f:
+        f.write(content)
+
+    print("[restore_acidentes_from_github] Arquivo de acidentes restaurado a partir do GitHub.")
+
 
 # ---------------------------------------------------------------------------
 # Regras de nível
