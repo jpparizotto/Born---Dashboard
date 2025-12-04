@@ -252,6 +252,8 @@ else:
         mime="text/csv",
     )
 
+    st.write("DEBUG: bloco depois do download_button está rodando ✅")
+
     # ─────────────────────────────────────────────────────
     # EDITAR / DELETAR ACIDENTES
     # ─────────────────────────────────────────────────────
