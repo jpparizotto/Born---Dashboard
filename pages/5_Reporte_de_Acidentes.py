@@ -231,6 +231,209 @@ else:
         file_name="acidentes_filtrados.csv",
         mime="text/csv",
     )
+    # ─────────────────────────────────────────────────────
+    # EDITAR / DELETAR ACIDENTES
+    # ─────────────────────────────────────────────────────
+    st.markdown("### ✏️ Editar ou deletar acidentes")
+
+    if df_filtrado.empty:
+        st.info("Nenhum acidente encontrado com os filtros atuais para editar ou deletar.")
+    else:
+        # Ordena para ficar igual à tabela exibida
+        df_sorted = df_filtrado.sort_values(["data", "hora"], ascending=[False, False])
+
+        # Vamos usar o índice original do df como identificador da linha
+        row_ids = df_sorted.index.tolist()
+
+        def format_option(row_id: int) -> str:
+            row = df.loc[row_id]
+            data_str = row["data"].strftime("%d/%m/%Y") if isinstance(row["data"], date) else str(row["data"])
+            hora_str = row["hora"].strftime("%H:%M") if isinstance(row["hora"], time) else str(row["hora"])
+            aluno_str = str(row.get("aluno", "") or "")
+            prof_str = str(row.get("professor", "") or "")
+            pista_str = str(row.get("pista", "") or "")
+            return f"{data_str} {hora_str} — {aluno_str} (Prof: {prof_str}, Pista: {pista_str})"
+
+        selected_row_id = st.selectbox(
+            "Selecione um acidente para editar ou deletar",
+            row_ids,
+            format_func=format_option,
+        )
+
+        row_sel = df.loc[selected_row_id]
+
+        st.markdown("#### ✏️ Editar acidente selecionado")
+
+        with st.form("form_editar_acidente"):
+            col_ed1, col_ed2 = st.columns(2)
+            with col_ed1:
+                data_edit = st.date_input(
+                    "Data",
+                    value=row_sel["data"] if isinstance(row_sel["data"], date) else date.today(),
+                    key="edit_data",
+                )
+            with col_ed2:
+                # hora pode ser NaN se veio quebrado
+                hora_default = row_sel["hora"] if isinstance(row_sel["hora"], time) else time(0, 0)
+                hora_edit = st.time_input(
+                    "Hora",
+                    value=hora_default,
+                    step=60,
+                    key="edit_hora",
+                )
+
+            col_ed3, col_ed4, col_ed5 = st.columns(3)
+            with col_ed3:
+                professor_edit = st.text_input(
+                    "Professor",
+                    value=str(row_sel.get("professor", "") or ""),
+                    key="edit_professor",
+                )
+            with col_ed4:
+                numero_aula_edit = st.number_input(
+                    "Nº da aula no dia",
+                    min_value=1,
+                    max_value=20,
+                    value=int(row_sel.get("numero_aula_dia", 1) or 1),
+                    key="edit_num_aula",
+                )
+            with col_ed5:
+                aluno_edit = st.text_input(
+                    "Aluno",
+                    value=str(row_sel.get("aluno", "") or ""),
+                    key="edit_aluno",
+                )
+
+            col_ed6, col_ed7, col_ed8 = st.columns(3)
+            with col_ed6:
+                pista_edit = st.selectbox(
+                    "Pista",
+                    ["Direita", "Esquerda", "Ambas"],
+                    index=["Direita", "Esquerda", "Ambas"].index(
+                        row_sel.get("pista") if row_sel.get("pista") in ["Direita", "Esquerda", "Ambas"] else "Direita"
+                    ),
+                    key="edit_pista",
+                )
+            with col_ed7:
+                inclinacao_edit = st.number_input(
+                    "Inclinação (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=1.0,
+                    value=float(row_sel.get("inclinacao_pct", 0) or 0.0),
+                    key="edit_inclinacao",
+                )
+            with col_ed8:
+                velocidade_edit = st.number_input(
+                    "Velocidade (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=1.0,
+                    value=float(row_sel.get("velocidade_pct", 0) or 0.0),
+                    key="edit_velocidade",
+                )
+
+            col_ed9, col_ed10, col_ed11 = st.columns(3)
+            with col_ed9:
+                momento_edit = st.selectbox(
+                    "Momento da aula",
+                    ["Início", "Meio", "Final"],
+                    index=["Início", "Meio", "Final"].index(
+                        row_sel.get("momento_aula") if row_sel.get("momento_aula") in ["Início", "Meio", "Final"] else "Meio"
+                    ),
+                    key="edit_momento",
+                )
+            with col_ed10:
+                gravidade_edit = st.selectbox(
+                    "Gravidade",
+                    ["Leve", "Moderada", "Grave"],
+                    index=["Leve", "Moderada", "Grave"].index(
+                        row_sel.get("gravidade") if row_sel.get("gravidade") in ["Leve", "Moderada", "Grave"] else "Leve"
+                    ),
+                    key="edit_gravidade",
+                )
+            with col_ed11:
+                parte_corpo_edit = st.text_input(
+                    "Parte do corpo afetada",
+                    value=str(row_sel.get("parte_corpo", "") or ""),
+                    key="edit_parte_corpo",
+                )
+
+            encaminhamento_edit = st.selectbox(
+                "Encaminhamento",
+                [
+                    "Sem necessidade de atendimento",
+                    "Primeiros socorros na Born to Ski",
+                    "Encaminhado ao hospital",
+                ],
+                index=[
+                    "Sem necessidade de atendimento",
+                    "Primeiros socorros na Born to Ski",
+                    "Encaminhado ao hospital",
+                ].index(
+                    row_sel.get("encaminhamento")
+                    if row_sel.get("encaminhamento")
+                    in [
+                        "Sem necessidade de atendimento",
+                        "Primeiros socorros na Born to Ski",
+                        "Encaminhado ao hospital",
+                    ]
+                    else "Sem necessidade de atendimento"
+                ),
+                key="edit_encaminhamento",
+            )
+
+            descricao_edit = st.text_area(
+                "Descrição do professor",
+                value=str(row_sel.get("descricao", "") or ""),
+                height=150,
+                key="edit_descricao",
+            )
+
+            salvar_edicao = st.form_submit_button("💾 Salvar alterações")
+
+        if salvar_edicao:
+            # Atualiza a linha selecionada no df original
+            df.loc[selected_row_id, "data"] = data_edit
+            df.loc[selected_row_id, "hora"] = hora_edit
+            df.loc[selected_row_id, "professor"] = professor_edit.strip()
+            df.loc[selected_row_id, "numero_aula_dia"] = int(numero_aula_edit)
+            df.loc[selected_row_id, "aluno"] = aluno_edit.strip()
+            df.loc[selected_row_id, "pista"] = pista_edit
+            df.loc[selected_row_id, "inclinacao_pct"] = float(inclinacao_edit)
+            df.loc[selected_row_id, "velocidade_pct"] = float(velocidade_edit)
+            df.loc[selected_row_id, "momento_aula"] = momento_edit
+            df.loc[selected_row_id, "gravidade"] = gravidade_edit
+            df.loc[selected_row_id, "parte_corpo"] = parte_corpo_edit.strip()
+            df.loc[selected_row_id, "encaminhamento"] = encaminhamento_edit
+            df.loc[selected_row_id, "descricao"] = descricao_edit.strip()
+
+            save_acidentes_df(df)
+            try:
+                backup_acidentes_to_github()
+            except Exception:
+                st.warning("Alterações salvas, mas houve erro ao enviar backup para o GitHub.")
+            else:
+                st.success("Acidente atualizado com sucesso e backup enviado para o GitHub!")
+            st.experimental_rerun()
+
+        st.markdown("#### 🗑️ Deletar acidente selecionado")
+
+        col_del1, col_del2 = st.columns([1, 2])
+        with col_del1:
+            confirmar_delete = st.checkbox("Confirmar exclusão")
+
+        with col_del2:
+            if st.button("🗑️ Deletar acidente", disabled=not confirmar_delete):
+                df = df.drop(index=selected_row_id)
+                save_acidentes_df(df)
+                try:
+                    backup_acidentes_to_github()
+                except Exception:
+                    st.warning("Acidente deletado, mas houve erro ao enviar backup para o GitHub.")
+                else:
+                    st.success("Acidente deletado com sucesso e backup enviado para o GitHub!")
+                st.experimental_rerun()
 
     # ─────────────────────────────────────────────────────
     # MÉTRICAS E ESTATÍSTICAS
