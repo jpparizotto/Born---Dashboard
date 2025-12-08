@@ -200,7 +200,6 @@ if submitted:
         else:
             st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
 
-        safe_rerun()
    
 
 # ─────────────────────────────────────────────────────────
@@ -478,7 +477,7 @@ else:
                     st.success(
                         "Acidente atualizado com sucesso e backup enviado para o GitHub!"
                     )
-                st.experimental_rerun()
+                safe_rerun()
 
             st.markdown("#### 🗑️ Deletar acidente selecionado")
 
