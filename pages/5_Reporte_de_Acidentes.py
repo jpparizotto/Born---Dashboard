@@ -44,6 +44,16 @@ COLUMNS = [
     "descricao",
 ]
 
+def safe_rerun():
+    """
+    Tenta recarregar o app usando st.rerun (novo)
+    ou st.experimental_rerun (versões mais antigas).
+    Não quebra se nenhuma das duas existir.
+    """
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
 
 def load_acidentes_df() -> pd.DataFrame:
     os.makedirs(DATA_PATH, exist_ok=True)
@@ -189,6 +199,9 @@ if submitted:
             )
         else:
             st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
+
+        safe_rerun()
+   
 
 # ─────────────────────────────────────────────────────────
 # FILTROS E VISUALIZAÇÃO DA BASE
@@ -493,7 +506,7 @@ else:
                         st.success(
                             "Acidente deletado com sucesso e backup enviado para o GitHub!"
                         )
-                    st.experimental_rerun()
+                    safe_rerun()
 
     # ─────────────────────────────────────────────────────
     # MÉTRICAS E ESTATÍSTICAS
