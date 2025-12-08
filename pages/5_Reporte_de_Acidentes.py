@@ -159,36 +159,36 @@ with st.form("form_novo_acidente", clear_on_submit=True):
 
     submitted = st.form_submit_button("Salvar reporte")
 
-    if submitted:
-        if not professor or not aluno or not descricao:
-            st.error("Preencha pelo menos professor, aluno e descrição.")
-        else:
-            novo_registro = {
-                "data": data_acc,
-                "hora": hora_acc,
-                "professor": professor.strip(),
-                "numero_aula_dia": int(numero_aula_dia),
-                "aluno": aluno.strip(),
-                "pista": pista,
-                "inclinacao_pct": float(inclinacao_pct),
-                "velocidade_pct": float(velocidade_pct),
-                "momento_aula": momento_aula,
-                "gravidade": gravidade,
-                "parte_corpo": parte_corpo.strip(),
-                "encaminhamento": encaminhamento,
-                "descricao": descricao.strip(),
-            }
-            df = pd.concat([df, pd.DataFrame([novo_registro])], ignore_index=True)
-            save_acidentes_df(df)
+if submitted:
+    if not professor.strip() or not aluno.strip() or not descricao.strip():
+        st.error("Por favor, preencha todos os campos obrigatórios marcados com *.")
+    else:
+        novo_registro = {
+            "data": data_acc,
+            "hora": hora_acc,
+            "professor": professor.strip(),
+            "numero_aula_dia": int(numero_aula_dia),
+            "aluno": aluno.strip(),
+            "pista": pista,
+            "inclinacao_pct": float(inclinacao_pct),
+            "velocidade_pct": float(velocidade_pct),
+            "momento_aula": momento_aula,
+            "gravidade": gravidade,
+            "parte_corpo": parte_corpo.strip(),
+            "encaminhamento": encaminhamento,
+            "descricao": descricao.strip(),
+        }
+        df = pd.concat([df, pd.DataFrame([novo_registro])], ignore_index=True)
+        save_acidentes_df(df)
 
-            try:
-                backup_acidentes_to_github()
-            except Exception:
-                st.warning(
-                    "Reporte salvo localmente, mas houve erro ao enviar o backup para o GitHub."
-                )
-            else:
-                st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
+        try:
+            backup_acidentes_to_github()
+        except Exception:
+            st.warning(
+                "Reporte salvo localmente, mas houve erro ao enviar o backup para o GitHub."
+            )
+        else:
+            st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
 
 # ─────────────────────────────────────────────────────────
 # FILTROS E VISUALIZAÇÃO DA BASE
@@ -224,7 +224,7 @@ else:
 
     df_filtrado = df.copy()
 
-    if isinstance(intervalo_datas, (list, tuple)) and len(intervalo_datas) == 2:
+    if isinstance(intervalo_datas, tuple) and len(intervalo_datas) == 2:
         ini, fim = intervalo_datas
         df_filtrado = df_filtrado[
             (df_filtrado["data"] >= ini) & (df_filtrado["data"] <= fim)
@@ -252,8 +252,6 @@ else:
         mime="text/csv",
     )
 
-    st.write("DEBUG: bloco depois do download_button está rodando ✅")
-
     # ─────────────────────────────────────────────────────
     # EDITAR / DELETAR ACIDENTES
     # ─────────────────────────────────────────────────────
@@ -280,10 +278,10 @@ else:
                     if isinstance(row["hora"], time)
                     else str(row["hora"])
                 )
-                aluno_str = str(row.get("aluno", "") or "")
-                prof_str = str(row.get("professor", "") or "")
-                pista_str = str(row.get("pista", "") or "")
-                return f"{data_str} {hora_str} — {aluno_str} (Prof: {prof_str}, Pista: {pista_str})"
+                return (
+                    f"{data_str} {hora_str} — {row.get('aluno', '')} "
+                    f"(Prof: {row.get('professor', '')}, Pista: {row.get('pista', '')})"
+                )
 
             selected_row_id = st.selectbox(
                 "Selecione um acidente para editar ou deletar",
@@ -293,9 +291,14 @@ else:
 
             row_sel = df.loc[selected_row_id]
 
+            # sufixo único por acidente selecionado, para que os widgets
+            # não "grudem" no primeiro acidente carregado
+            suffix = f"_{selected_row_id}"
+
             st.markdown("#### ✏️ Editar acidente selecionado")
 
-            with st.form("form_editar_acidente"):
+            with st.form(f"form_editar_acidente{suffix}"):
+
                 col_ed1, col_ed2 = st.columns(2)
                 with col_ed1:
                     data_edit = st.date_input(
@@ -303,7 +306,7 @@ else:
                         value=row_sel["data"]
                         if isinstance(row_sel["data"], date)
                         else date.today(),
-                        key="edit_data",
+                        key=f"edit_data{suffix}",
                     )
                 with col_ed2:
                     hora_default = (
@@ -315,7 +318,7 @@ else:
                         "Hora",
                         value=hora_default,
                         step=60,
-                        key="edit_hora",
+                        key=f"edit_hora{suffix}",
                     )
 
                 col_ed3, col_ed4, col_ed5 = st.columns(3)
@@ -323,21 +326,21 @@ else:
                     professor_edit = st.text_input(
                         "Professor",
                         value=str(row_sel.get("professor", "") or ""),
-                        key="edit_professor",
+                        key=f"edit_professor{suffix}",
                     )
                 with col_ed4:
                     numero_aula_edit = st.number_input(
                         "Nº da aula no dia",
                         min_value=1,
-                        max_value=20,
+                        step=1,
                         value=int(row_sel.get("numero_aula_dia", 1) or 1),
-                        key="edit_num_aula",
+                        key=f"edit_numero_aula_dia{suffix}",
                     )
                 with col_ed5:
                     aluno_edit = st.text_input(
                         "Aluno",
                         value=str(row_sel.get("aluno", "") or ""),
-                        key="edit_aluno",
+                        key=f"edit_aluno{suffix}",
                     )
 
                 col_ed6, col_ed7, col_ed8 = st.columns(3)
@@ -350,7 +353,7 @@ else:
                             if row_sel.get("pista") in ["A", "B"]
                             else "A"
                         ),
-                        key="edit_pista",
+                        key=f"edit_pista{suffix}",
                     )
                 with col_ed7:
                     inclinacao_edit = st.number_input(
@@ -359,7 +362,7 @@ else:
                         max_value=100.0,
                         step=1.0,
                         value=float(row_sel.get("inclinacao_pct", 0) or 0.0),
-                        key="edit_inclinacao",
+                        key=f"edit_inclinacao{suffix}",
                     )
                 with col_ed8:
                     velocidade_edit = st.number_input(
@@ -368,7 +371,7 @@ else:
                         max_value=100.0,
                         step=1.0,
                         value=float(row_sel.get("velocidade_pct", 0) or 0.0),
-                        key="edit_velocidade",
+                        key=f"edit_velocidade{suffix}",
                     )
 
                 col_ed9, col_ed10, col_ed11 = st.columns(3)
@@ -382,7 +385,7 @@ else:
                             in ["Início", "Meio", "Final"]
                             else "Meio"
                         ),
-                        key="edit_momento",
+                        key=f"edit_momento_aula{suffix}",
                     )
                 with col_ed10:
                     gravidade_edit = st.selectbox(
@@ -394,13 +397,13 @@ else:
                             in ["Leve", "Moderada", "Grave"]
                             else "Leve"
                         ),
-                        key="edit_gravidade",
+                        key=f"edit_gravidade{suffix}",
                     )
                 with col_ed11:
                     parte_corpo_edit = st.text_input(
                         "Parte do corpo afetada",
                         value=str(row_sel.get("parte_corpo", "") or ""),
-                        key="edit_parte_corpo",
+                        key=f"edit_parte_corpo{suffix}",
                     )
 
                 encaminhamento_edit = st.selectbox(
@@ -424,14 +427,14 @@ else:
                         ]
                         else "Sem necessidade de atendimento"
                     ),
-                    key="edit_encaminhamento",
+                    key=f"edit_encaminhamento{suffix}",
                 )
 
                 descricao_edit = st.text_area(
                     "Descrição do professor",
                     value=str(row_sel.get("descricao", "") or ""),
                     height=150,
-                    key="edit_descricao",
+                    key=f"edit_descricao{suffix}",
                 )
 
                 salvar_edicao = st.form_submit_button("💾 Salvar alterações")
@@ -468,10 +471,16 @@ else:
 
             col_del1, col_del2 = st.columns([1, 2])
             with col_del1:
-                confirmar_delete = st.checkbox("Confirmar exclusão")
+                confirmar_delete = st.checkbox(
+                    "Confirmar exclusão", key=f"confirm_delete{suffix}"
+                )
 
             with col_del2:
-                if st.button("🗑️ Deletar acidente", disabled=not confirmar_delete):
+                if st.button(
+                    "🗑️ Deletar acidente",
+                    disabled=not confirmar_delete,
+                    key=f"btn_delete{suffix}",
+                ):
                     df = df.drop(index=selected_row_id)
                     save_acidentes_df(df)
                     try:
