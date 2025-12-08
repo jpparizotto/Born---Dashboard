@@ -21,8 +21,7 @@ st.set_page_config(
 
 st.title("⚠️ Reporte de Acidentes — Born to Ski")
 st.caption("Módulo para registro e acompanhamento diário de incidentes em aula.")
-st.error("VERSÃO NOVA DO MÓDULO DE ACIDENTES 🚨")
-st.stop()
+
 DATA_PATH = "data"
 CSV_PATH = os.path.join(DATA_PATH, "acidentes.csv")
 
