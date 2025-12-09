@@ -805,7 +805,7 @@ if df_daily is not None and not df_daily.empty:
     df_daily["data"] = pd.to_datetime(df_daily["data"]).dt.date
     
     # Define o corte
-    data_corte = date(2024, 11, 30)
+    data_corte = date(2025, 11, 30)
     
     df_filtrado = df_daily[df_daily["data"] >= data_corte]
     
