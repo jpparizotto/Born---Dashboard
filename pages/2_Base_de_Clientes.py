@@ -801,10 +801,14 @@ if df_daily is not None and not df_daily.empty:
         )
         st.plotly_chart(fig_total, use_container_width=True)
 
-    # Filtrar a partir de 30/11
-    df_filtrado = df_daily[df_daily["data"] >= "2024-11-30"]
+    # Garante que a coluna 'data' é data (sem horário)
+    df_daily["data"] = pd.to_datetime(df_daily["data"]).dt.date
     
-    # 2) Variação diária (novos clientes)
+    # Define o corte
+    data_corte = date(2024, 11, 30)
+    
+    df_filtrado = df_daily[df_daily["data"] >= data_corte]
+    
     with c_hist2:
         fig_var = px.bar(
             df_filtrado,
