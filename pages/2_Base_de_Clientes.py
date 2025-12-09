@@ -39,6 +39,54 @@ if not EVO_USER or not EVO_TOKEN:
 # HELPERS API
 # ──────────────────────────────────────────────────────────────────────────────
 
+@st.cache_data(show_spinner=False)
+def geocode_address(addr: str):
+    """
+    Usa o Nominatim (OpenStreetMap) para transformar um endereço em (lat, lon).
+    Cacheado para não ficar chamando toda hora.
+    """
+    if not addr:
+        return None, None
+
+    try:
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": addr + ", Brasil",
+            "format": "json",
+            "limit": 1,
+        }
+        headers = {"User-Agent": "born-to-ski-dashboard/1.0"}
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return None, None
+        lat = float(data[0]["lat"])
+        lon = float(data[0]["lon"])
+        return lat, lon
+    except Exception:
+        return None, None
+
+
+@st.cache_data(show_spinner=True)
+def add_lat_lon(df_enderecos: pd.DataFrame) -> pd.DataFrame:
+    """
+    Recebe um DF com EnderecoLinha e devolve com colunas lat/lon preenchidas.
+    Usa cache pra não recalcular toda vez.
+    """
+    rows = []
+    for _, row in df_enderecos.iterrows():
+        end = row.get("EnderecoLinha", "")
+        lat, lon = geocode_address(end)
+        row = row.copy()
+        row["lat"] = lat
+        row["lon"] = lon
+        rows.append(row)
+
+    df_out = pd.DataFrame(rows)
+    df_out = df_out.dropna(subset=["lat", "lon"])
+    return df_out
+
 def _fix_mojibake(s: str) -> str:
     """Corrige 'SÃ£o Paulo' → 'São Paulo' quando vier com encoding errado."""
     if not isinstance(s, str) or not s:
@@ -767,6 +815,43 @@ if termo:
 
 dfv = dfc[mask].copy()
 st.caption(f"Filtrados: {len(dfv)}")
+
+st.divider()
+st.subheader("📍 Mapa de clientes (Brasil)")
+
+# Usa apenas clientes filtrados que têm endereço
+if "EnderecoLinha" in dfv.columns and not dfv.empty:
+    df_map_base = dfv[dfv["EnderecoLinha"].notna() & (dfv["EnderecoLinha"] != "")][
+        ["Nome", "Bairro", "Cidade", "UF", "EnderecoLinha"]
+    ].drop_duplicates()
+
+    if df_map_base.empty:
+        st.info("Não há endereços suficientes para montar o mapa.")
+    else:
+        with st.spinner("Geocodificando endereços (pode levar alguns segundos na primeira vez)..."):
+            df_map = add_lat_lon(df_map_base)
+
+        if df_map.empty:
+            st.warning("Não foi possível localizar os endereços no mapa.")
+        else:
+            fig_map = px.scatter_mapbox(
+                df_map,
+                lat="lat",
+                lon="lon",
+                hover_name="Nome",
+                hover_data=["Bairro", "Cidade", "UF"],
+                zoom=4,
+                height=500,
+            )
+            # Usa mapa aberto (não precisa de token)
+            fig_map.update_layout(
+                mapbox_style="open-street-map",
+                margin=dict(r=0, t=0, l=0, b=0),
+            )
+            st.plotly_chart(fig_map, use_container_width=True)
+else:
+    st.info("Nenhum cliente com endereço para exibir no mapa.")
+
 # ─────────────────────────────────────────────────────────────
 # HISTÓRICO DIÁRIO DE CLIENTES
 # ─────────────────────────────────────────────────────────────
