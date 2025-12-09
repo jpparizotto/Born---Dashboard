@@ -815,12 +815,21 @@ if df_daily is not None and not df_daily.empty:
             x="data",
             y="novos_clientes",
             title="Variação diária (novos clientes)",
+            text="novos_clientes",        # 👈 manda plotly usar essa coluna como rótulo
         )
+    
+        # coloca o texto fora da barra (em cima)
+        fig_var.update_traces(
+            textposition="outside",
+        )
+    
         fig_var.update_layout(
             xaxis_title="Data",
             yaxis_title="Novos clientes no dia",
         )
+    
         st.plotly_chart(fig_var, use_container_width=True)
+
 
     # Tabela abaixo (opcional)
     st.caption("Histórico bruto")
