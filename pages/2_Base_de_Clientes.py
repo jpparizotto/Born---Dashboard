@@ -847,6 +847,66 @@ if df_daily is not None and not df_daily.empty:
     )
 else:
     st.info("Ainda não há histórico diário de clientes registrado.")
+# ─────────────────────────────────────────────────────────────
+# MAPA DE CLIENTES (usa CSV geocodificado externo)
+# ─────────────────────────────────────────────────────────────
+st.divider()
+st.subheader("📍 Mapa de clientes (endereços)")
+
+GEO_PATH = os.path.join("data", "clientes_geocodificados.csv")
+
+if os.path.exists(GEO_PATH):
+    try:
+        df_geo = pd.read_csv(GEO_PATH)
+    except Exception as e:
+        st.error("Não foi possível carregar o CSV 'clientes_geocodificados.csv'.")
+        st.exception(e)
+        df_geo = None
+
+    if (
+        df_geo is not None
+        and not dfv.empty
+        and "IdCliente" in dfv.columns
+        and "IdCliente" in df_geo.columns
+    ):
+        # garante tipos compatíveis para merge
+        df_geo["IdCliente"] = df_geo["IdCliente"].astype(str)
+        dfv_merge = dfv.copy()
+        dfv_merge["IdCliente"] = dfv_merge["IdCliente"].astype(str)
+
+        # junta apenas clientes filtrados que têm lat/lon
+        df_map = dfv_merge.merge(
+            df_geo[["IdCliente", "lat", "lon"]],
+            on="IdCliente",
+            how="inner",
+        )
+
+        # converte para número e remove coordenadas inválidas
+        df_map["lat"] = pd.to_numeric(df_map["lat"], errors="coerce")
+        df_map["lon"] = pd.to_numeric(df_map["lon"], errors="coerce")
+        df_map = df_map.dropna(subset=["lat", "lon"])
+
+        if df_map.empty:
+            st.info("Nenhum cliente filtrado possui coordenadas geográficas salvas.")
+        else:
+            fig_map = px.scatter_mapbox(
+                df_map,
+                lat="lat",
+                lon="lon",
+                hover_name="Nome",
+                hover_data=[c for c in ["Bairro", "Cidade", "UF"] if c in df_map.columns],
+                zoom=10,     # bom para ver São Paulo e arredores; dá pra mexer no zoom depois
+                height=600,
+            )
+            fig_map.update_layout(
+                mapbox_style="open-street-map",
+                margin=dict(r=0, t=0, l=0, b=0),
+            )
+            st.plotly_chart(fig_map, use_container_width=True)
+    else:
+        st.info("Não foi possível cruzar os clientes filtrados com o arquivo de coordenadas.")
+else:
+    st.info("Arquivo 'data/clientes_geocodificados.csv' ainda não foi encontrado. Gere e envie o arquivo para a pasta 'data/'.")
 
 # ─────────────────────────────────────────────────────────────
 # DETALHE DE UM CLIENTE ESPECÍFICO (substitui os gráficos)
