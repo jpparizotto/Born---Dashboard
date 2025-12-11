@@ -895,7 +895,7 @@ if os.path.exists(GEO_PATH):
                 lon="lon",
                 hover_name="Nome",
                 hover_data=[c for c in ["Bairro", "Cidade", "UF"] if c in df_map.columns],
-                zoom=10,     # bom para ver São Paulo e arredores; dá pra mexer no zoom depois
+                zoom=1,     # bom para ver São Paulo e arredores; dá pra mexer no zoom depois
                 height=600,
             )
             fig_map.update_layout(
