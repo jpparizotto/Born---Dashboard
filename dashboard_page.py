@@ -1209,6 +1209,31 @@ else:
 
 
 st.divider()
+# ──────────────────────────────────────────────────────────────────────────────
+# Breakdown de modalidades: dias de semana x finais de semana
+# ──────────────────────────────────────────────────────────────────────────────
+df_break = df.copy()
+
+# Garantir que Data esteja como datetime
+df_break["DataDT"] = pd.to_datetime(df_break["Data"])
+
+# 0=Seg ... 6=Dom -> <5 semana, >=5 fim de semana
+df_break["TipoDia"] = df_break["DataDT"].dt.dayofweek.apply(
+    lambda x: "Semana" if x < 5 else "Fim de semana"
+)
+
+# Contagem de slots por modalidade e tipo de dia
+grp_break = df_break.groupby(["TipoDia", "Atividade"], as_index=False).agg(
+    Slots=("Horario", "count")
+)
+
+# Total de slots por tipo de dia
+grp_break["TotalSlotsTipoDia"] = grp_break.groupby("TipoDia")["Slots"].transform("sum")
+
+# Percentual dentro do tipo de dia
+grp_break["PctSlots"] = (
+    grp_break["Slots"] / grp_break["TotalSlotsTipoDia"] * 100
+).round(1)
 
 # Tabela & Downloads
 st.subheader("Dados filtrados (detalhado)")
@@ -1216,14 +1241,25 @@ st.dataframe(df.sort_values(["Data", "Horario", "Atividade"]).reset_index(drop=T
 
 import io
 
-col_a, col_b, col_c = st.columns(3)
+col_a, col_b, col_c, col_d = st.columns(4)
 
+# 1) CSV com dados filtrados (como já era)
 with col_a:
-    _download_button_csv(df.sort_values(["Data", "Horario", "Atividade"]), "⬇️ Baixar dados filtrados (CSV)", "dados_filtrados.csv")
+    _download_button_csv(
+        df.sort_values(["Data", "Horario", "Atividade"]),
+        "⬇️ Baixar dados filtrados (CSV)",
+        "dados_filtrados.csv",
+    )
 
+# 2) CSV ocupação por dia (como já era)
 with col_b:
-    _download_button_csv(grp_day.sort_values("Data"), "⬇️ Baixar ocupação por dia (CSV)", "ocupacao_por_dia.csv")
+    _download_button_csv(
+        grp_day.sort_values("Data"),
+        "⬇️ Baixar ocupação por dia (CSV)",
+        "ocupacao_por_dia.csv",
+    )
 
+# 3) Excel da grade (como já era)
 with col_c:
     selected_cols = [
         "Pista", "Data", "Início", "Fim", "Atividade",
@@ -1256,6 +1292,58 @@ with col_c:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+# 4) NOVO: Excel com breakdown modalidades semana x fim de semana
+with col_d:
+    buffer_break = io.BytesIO()
+    with pd.ExcelWriter(buffer_break, engine="xlsxwriter") as writer:
+        # Dias de semana
+        df_semana = grp_break[grp_break["TipoDia"] == "Semana"].copy()
+        if not df_semana.empty:
+            df_semana = df_semana[["Atividade", "Slots", "TotalSlotsTipoDia", "PctSlots"]]
+            df_semana = df_semana.sort_values("PctSlots", ascending=False)
+            df_semana.rename(
+                columns={
+                    "Slots": "Slots (aulas)",
+                    "TotalSlotsTipoDia": "Total slots (dias de semana)",
+                    "PctSlots": "% dos slots (semana)",
+                },
+                inplace=True,
+            )
+            df_semana.to_excel(writer, index=False, sheet_name="Semana")
+            ws = writer.sheets["Semana"]
+            for i, col in enumerate(df_semana.columns):
+                max_len = max(df_semana[col].astype(str).map(len).max(), len(col)) + 2
+                ws.set_column(i, i, min(max_len, 40))
+
+        # Finais de semana
+        df_fim = grp_break[grp_break["TipoDia"] == "Fim de semana"].copy()
+        if not df_fim.empty:
+            df_fim = df_fim[["Atividade", "Slots", "TotalSlotsTipoDia", "PctSlots"]]
+            df_fim = df_fim.sort_values("PctSlots", ascending=False)
+            df_fim.rename(
+                columns={
+                    "Slots": "Slots (aulas)",
+                    "TotalSlotsTipoDia": "Total slots (finais de semana)",
+                    "PctSlots": "% dos slots (fim de semana)",
+                },
+                inplace=True,
+            )
+            df_fim.to_excel(writer, index=False, sheet_name="FimSemana")
+            ws = writer.sheets["FimSemana"]
+            for i, col in enumerate(df_fim.columns):
+                max_len = max(df_fim[col].astype(str).map(len).max(), len(col)) + 2
+                ws.set_column(i, i, min(max_len, 40))
+
+    buffer_break.seek(0)
+
+    st.download_button(
+        label="⬇️ Breakdown modalidades (XLSX)",
+        data=buffer_break.getvalue(),
+        file_name="breakdown_modalidades_semana_fimsemana.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 import io
 
 st.divider()
@@ -1286,6 +1374,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
