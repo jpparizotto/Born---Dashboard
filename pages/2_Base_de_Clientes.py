@@ -961,8 +961,8 @@ if os.path.exists(GEO_PATH):
 
             # pins vermelhos (escola + nova unidade)
             fig_map.add_scattermapbox(
-                lat=-23.5978815,
-                lon=-46.680212,
+                lat=[-23.5978815],
+                lon=[-46.680212],
                 mode="markers+text",
                 marker=dict(size=18, color="red"),
                 text=["🏁 Escola (Vila Olímpia)"],
@@ -971,8 +971,8 @@ if os.path.exists(GEO_PATH):
             )
 
             fig_map.add_scattermapbox(
-                lat=-23.5640038,
-                lon=-46.6982547,
+                lat=[-23.5640038],
+                lon=[-46.6982547],
                 mode="markers+text",
                 marker=dict(size=18, color="red"),
                 text=["📍 Possível nova unidade (Pinheiros)"],
