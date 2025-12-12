@@ -848,10 +848,27 @@ if df_daily is not None and not df_daily.empty:
 else:
     st.info("Ainda não há histórico diário de clientes registrado.")
 # ─────────────────────────────────────────────────────────────
-# MAPA DE CLIENTES (usa CSV geocodificado externo)
+# MAPA + DISTÂNCIAS (usa CSV geocodificado externo)
 # ─────────────────────────────────────────────────────────────
+import math
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlmb/2)**2
+    return 2 * R * math.asin(math.sqrt(a))
+
 st.divider()
-st.subheader("📍 Mapa de clientes (endereços)")
+st.subheader("📍 Mapa de clientes (endereços) + distâncias")
+
+# ⚠️ SUBSTITUA pelas coordenadas reais assim que você geocodificar os 2 endereços
+SCHOOL_LAT = -23.5950
+SCHOOL_LON = -46.6890
+
+NEW_LAT = -23.5600
+NEW_LON = -46.6900
 
 GEO_PATH = os.path.join("data", "clientes_geocodificados.csv")
 
@@ -889,20 +906,87 @@ if os.path.exists(GEO_PATH):
         if df_map.empty:
             st.info("Nenhum cliente filtrado possui coordenadas geográficas salvas.")
         else:
+            # ── (1) DISTÂNCIA ATÉ A ESCOLA (Vila Olímpia)
+            df_map["dist_km_escola"] = df_map.apply(
+                lambda r: haversine_km(SCHOOL_LAT, SCHOOL_LON, float(r["lat"]), float(r["lon"])),
+                axis=1
+            )
+
+            bins = [0, 1, 5, 10, 20, float("inf")]
+            labels = ["<1km", "1-5km", "5-10km", "10-20km", ">20km"]
+
+            df_map["faixa_dist_escola"] = pd.cut(
+                df_map["dist_km_escola"],
+                bins=bins,
+                labels=labels,
+                right=True,
+                include_lowest=True,
+            )
+
+            dist_summary = (
+                df_map["faixa_dist_escola"]
+                .value_counts(dropna=False)
+                .reindex(labels)
+                .fillna(0)
+                .astype(int)
+                .reset_index()
+            )
+            dist_summary.columns = ["Faixa", "Clientes"]
+            dist_summary["%"] = (dist_summary["Clientes"] / dist_summary["Clientes"].sum() * 100).round(1)
+
+            st.subheader("📏 Distância dos clientes até a escola (Vila Olímpia)")
+            st.dataframe(dist_summary, use_container_width=True)
+
+            fig_dist = px.bar(
+                dist_summary,
+                x="Faixa",
+                y="%",
+                text="%",
+                title="% de clientes por faixa de distância (até a escola)",
+            )
+            fig_dist.update_traces(textposition="outside")
+            fig_dist.update_layout(yaxis_title="% de clientes", xaxis_title="Faixa")
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+            # ── (2) MAPA
             fig_map = px.scatter_mapbox(
                 df_map,
                 lat="lat",
                 lon="lon",
                 hover_name="Nome",
-                hover_data=[c for c in ["Bairro", "Cidade", "UF"] if c in df_map.columns],
-                zoom=1,     # bom para ver São Paulo e arredores; dá pra mexer no zoom depois
-                height=600,
+                hover_data=[c for c in ["Bairro", "Cidade", "UF", "dist_km_escola"] if c in df_map.columns],
+                zoom=1,     # SP
+                height=650,
             )
+
+            # pins vermelhos (escola + nova unidade)
+            fig_map.add_scattermapbox(
+                lat=-23.5978815,
+                lon=-46.680212,
+                mode="markers+text",
+                marker=dict(size=18, color="red"),
+                text=["🏁 Escola (Vila Olímpia)"],
+                textposition="top right",
+                name="Escola",
+            )
+
+            fig_map.add_scattermapbox(
+                lat=-23.5640038,
+                lon=-46.6982547,
+                mode="markers+text",
+                marker=dict(size=18, color="red"),
+                text=["📍 Possível nova unidade (Pinheiros)"],
+                textposition="top right",
+                name="Nova unidade",
+            )
+
             fig_map.update_layout(
                 mapbox_style="open-street-map",
                 margin=dict(r=0, t=0, l=0, b=0),
             )
+
             st.plotly_chart(fig_map, use_container_width=True)
+
     else:
         st.info("Não foi possível cruzar os clientes filtrados com o arquivo de coordenadas.")
 else:
