@@ -408,7 +408,7 @@ def _extract_pista(container) -> str | None:
     # chaves candidatas (conforme costuma vir no detail)
     keys = [
         "pista", "track", "trackName", "lane", "belt",
-        "treadmill", "machine", "device", "deviceName",
+        "área", "area", "device", "deviceName",
     ]
 
     # leitura direta
@@ -1374,6 +1374,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
