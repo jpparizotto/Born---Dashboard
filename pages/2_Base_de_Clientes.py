@@ -979,7 +979,17 @@ if os.path.exists(GEO_PATH):
                 textposition="top right",
                 name="Nova unidade",
             )
-
+            
+            fig_map.add_scattermapbox(
+                lat=[-23.5533561],
+                lon=[-46.6743793],
+                mode="markers+text",
+                marker=dict(size=18, color="red"),
+                text=["📍 Possível nova unidade (Pinheiros)"],
+                textposition="top right",
+                name="Nova unidade",
+            )
+            
             fig_map.update_layout(
                 mapbox_style="open-street-map",
                 margin=dict(r=0, t=0, l=0, b=0),
