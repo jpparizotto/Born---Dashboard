@@ -381,62 +381,95 @@ LEVEL_ORDER_MAP = {
 }
 
 
-def split_nome_e_nivel(nome: str):
-    """
-    Recebe algo como:
-      'DANIEL BRUNS 1B'
-      'HENRIQUE 3A SB/2CSKI'
-      'MARIA 1BSK'
-      'JOÃO 2CSB'
+def split_nome_e_niveis_modalidade(nome: str):
+    """Extrai níveis a partir do *nome bruto*.
 
-    e retorna (nome_limpo, nivel_atual, nivel_ordem).
+    A EVO hoje embute o nível no final do nome e, agora, queremos separar:
+      - SK (Ski)
+      - SB (Snowboard)
+      - nível sem designação (ex.: "2B" sem SK/SB)
+      - sem nível algum
 
-    Regra:
-    - Procura todos os padrões [1-4][A-D] (aceita "2 B", "1BSK", "2CSB"...)
-    - Normaliza para "2B", "1B", "2C"
-    - Se houver vários, escolhe o de maior ordem
-    - Remove os códigos (com eventual SK/SB junto) do nome_limpo
+    Exemplos reais (com variações de formatação):
+      - "HENRIQUE BISSOCHI 3CSB/ 2CSK"  -> SB=3C, SK=2C
+      - "BRUNO ... 3BSK"               -> SK=3B
+      - "JULIO ... 3A SB"              -> SB=3A (com espaço)
+      - "MARIA ... 2B"                 -> SemDesignacao=2B
+
+    Retorna:
+      (nome_limpo,
+       nivel_ski, nivel_ski_ordem,
+       nivel_snow, nivel_snow_ordem,
+       nivel_sem_designacao, nivel_sem_designacao_ordem,
+       nivel_geral, nivel_geral_ordem)
     """
 
     if not nome:
-        return "", None, None
-
-    import re
+        return "", None, None, None, None, None, None, None, None
 
     nome_str = str(nome).strip()
     upper = nome_str.upper()
 
-    # encontra "2B", "2 B", "1BSK", "2CSB", "3A.", "4C+"
-    pattern = r"([1-4]\s*[A-D])"
-    matches = re.findall(pattern, upper)
+    # 1) Captura níveis COM modalidade (SK/SB), permitindo colado ou com espaço
+    #    Ex.: "3CSB", "3A SB", "2CSK", "1B  SK"
+    mod_pat = re.compile(r"\b([1-4]\s*[A-D])\s*(SKI?|SB)\b", flags=re.IGNORECASE)
 
-    if not matches:
-        return nome_str, None, None
+    ski_levels = []
+    snow_levels = []
 
-    # normaliza "2 B" -> "2B"
-    matches = [m.replace(" ", "") for m in matches]
+    # string auxiliar onde vamos apagar trechos já consumidos, para sobrar só níveis "genéricos"
+    scrub = upper
+    for m in mod_pat.finditer(upper):
+        lvl = (m.group(1) or "").replace(" ", "")
+        mod = (m.group(2) or "").upper()
+        if lvl in LEVEL_ORDER_MAP:
+            if mod.startswith("SK"):
+                ski_levels.append(lvl)
+            elif mod.startswith("SB"):
+                snow_levels.append(lvl)
+        # apaga o trecho do match para não contaminar a busca de níveis sem designação
+        span = m.span()
+        scrub = scrub[:span[0]] + (" " * (span[1] - span[0])) + scrub[span[1]:]
 
-    # filtra só níveis válidos
-    matches = [m for m in matches if m in LEVEL_ORDER_MAP]
-    if not matches:
-        return nome_str, None, None
+    # 2) Captura níveis SEM modalidade (genéricos), depois de remover os trechos SK/SB
+    generic_pat = re.compile(r"\b([1-4]\s*[A-D])\b")
+    generic_levels = []
+    for m in generic_pat.finditer(scrub):
+        lvl = (m.group(1) or "").replace(" ", "")
+        if lvl in LEVEL_ORDER_MAP:
+            generic_levels.append(lvl)
 
-    # melhor nível
-    best = max(matches, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
-    nivel_atual = best
-    nivel_ordem = LEVEL_ORDER_MAP.get(best)
+    def pick_best(levels):
+        levels = [x for x in levels if x in LEVEL_ORDER_MAP]
+        if not levels:
+            return None, None
+        best = max(levels, key=lambda x: LEVEL_ORDER_MAP.get(x, -1))
+        return best, LEVEL_ORDER_MAP.get(best)
 
-    # remove todos os códigos do nome, inclusive casos colados com SK/SB
+    nivel_ski, nivel_ski_ordem = pick_best(ski_levels)
+    nivel_snow, nivel_snow_ordem = pick_best(snow_levels)
+    nivel_sd, nivel_sd_ordem = pick_best(generic_levels)
+
+    # 3) Nível geral (melhor entre todos os encontrados)
+    nivel_geral, nivel_geral_ordem = pick_best(ski_levels + snow_levels + generic_levels)
+
+    # 4) Limpeza do nome: remove níveis+modalidade e níveis genéricos
     nome_limpo = nome_str
-    for code in set(matches):
-        # remove "1B", "1BSK", "1BSKI", "1BSB", etc
-        padrao_remocao = r'\b' + re.escape(code) + r'(?:SKI?|SBI?)?\b'
-        nome_limpo = re.sub(padrao_remocao, '', nome_limpo, flags=re.IGNORECASE)
+    # remove pares nível+modalidade (com ou sem espaço)
+    nome_limpo = re.sub(r"\b([1-4]\s*[A-D])\s*(SKI?|SB)\b", "", nome_limpo, flags=re.IGNORECASE)
+    # remove níveis genéricos isolados
+    nome_limpo = re.sub(r"\b([1-4]\s*[A-D])\b", "", nome_limpo, flags=re.IGNORECASE)
+    # remove separadores comuns que sobram no fim do nome
+    nome_limpo = re.sub(r"[\-/|]+", " ", nome_limpo)
+    nome_limpo = re.sub(r"\s+", " ", nome_limpo).strip()
 
-    # limpa espaços extras
-    nome_limpo = re.sub(r'\s+', ' ', nome_limpo).strip()
-
-    return nome_limpo, nivel_atual, nivel_ordem
+    return (
+        nome_limpo,
+        nivel_ski, nivel_ski_ordem,
+        nivel_snow, nivel_snow_ordem,
+        nivel_sd, nivel_sd_ordem,
+        nivel_geral, nivel_geral_ordem,
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE CLIENTES
@@ -472,7 +505,13 @@ def _normalize_members_basic(raw_list):
             ln = (c.get("lastName") or "").strip()
             nome_bruto = (fn + " " + ln).strip()
 
-        nome_limpo, nivel_atual, nivel_ordem = split_nome_e_nivel(nome_bruto)
+        (
+            nome_limpo,
+            nivel_ski, nivel_ski_ordem,
+            nivel_snow, nivel_snow_ordem,
+            nivel_sem_designacao, nivel_sem_designacao_ordem,
+            nivel_geral, nivel_geral_ordem,
+        ) = split_nome_e_niveis_modalidade(nome_bruto)
 
         sx = c.get("gender") or c.get("sexo") or c.get("sex") or ""
         if isinstance(sx, dict):
@@ -544,8 +583,16 @@ def _normalize_members_basic(raw_list):
             "IdCliente": str(cid) if cid is not None else "",
             "Nome": nome_bruto,
             "NomeLimpo": nome_limpo,
-            "NivelAtual": nivel_atual,
-            "NivelOrdem": nivel_ordem,
+            # Mantém 'NivelAtual'/'NivelOrdem' (compatibilidade), agora como "nível geral" (melhor entre SK/SB/sem designação)
+            "NivelAtual": nivel_geral,
+            "NivelOrdem": nivel_geral_ordem,
+            # Novas colunas por modalidade
+            "NivelSK": nivel_ski,
+            "NivelSKOrdem": nivel_ski_ordem,
+            "NivelSB": nivel_snow,
+            "NivelSBOrdem": nivel_snow_ordem,
+            "NivelSemDesignacao": nivel_sem_designacao,
+            "NivelSemDesignacaoOrdem": nivel_sem_designacao_ordem,
             "Sexo": sexo_fmt,
             "Nascimento": nascimento,
             "Idade": idade,
@@ -732,6 +779,22 @@ with colf2:
     cidades = sorted([x for x in dfc.get("Cidade", pd.Series(dtype=str)).dropna().unique()])
     sel_cid = st.multiselect("Cidade", cidades, default=cidades)
 
+# Filtro por bucket de nível (SK/SB/sem designação/sem nível)
+colf_mod, _ = st.columns([1, 1])
+with colf_mod:
+    filtro_nivel_bucket = st.selectbox(
+        "Filtrar por tipo de nível",
+        [
+            "Todos",
+            "Tem nível Ski (SK)",
+            "Tem nível Snowboard (SB)",
+            "Tem SK ou SB",
+            "Tem nível sem designação",
+            "Sem nível",
+        ],
+        index=0,
+    )
+
 colf3, colf4 = st.columns(2)
 with colf3:
     faixa_idade = st.slider("Faixa etária", 0, 90, (0, 90))
@@ -749,6 +812,24 @@ if sel_cid:
     mask &= dfc.get("Cidade", pd.Series(index=dfc.index)).isin(sel_cid)
 if sel_uf:
     mask &= dfc.get("UF", pd.Series(index=dfc.index)).isin(sel_uf)
+
+# aplica filtro de bucket
+if filtro_nivel_bucket != "Todos":
+    has_sk = dfc.get("NivelSK", pd.Series(index=dfc.index)).notna()
+    has_sb = dfc.get("NivelSB", pd.Series(index=dfc.index)).notna()
+    has_sd = dfc.get("NivelSemDesignacao", pd.Series(index=dfc.index)).notna()
+    has_any = has_sk | has_sb | has_sd
+
+    if filtro_nivel_bucket == "Tem nível Ski (SK)":
+        mask &= has_sk
+    elif filtro_nivel_bucket == "Tem nível Snowboard (SB)":
+        mask &= has_sb
+    elif filtro_nivel_bucket == "Tem SK ou SB":
+        mask &= (has_sk | has_sb)
+    elif filtro_nivel_bucket == "Tem nível sem designação":
+        mask &= has_sd
+    elif filtro_nivel_bucket == "Sem nível":
+        mask &= (~has_any)
 
 if "Idade" in dfc.columns and dfc["Idade"].notna().any():
     mask &= dfc["Idade"].fillna(-1).between(faixa_idade[0], faixa_idade[1], inclusive="both")
