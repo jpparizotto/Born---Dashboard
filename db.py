@@ -74,6 +74,12 @@ def init_db_if_needed() -> None:
             criado_em     TEXT,
             nivel_atual   TEXT,
             nivel_ordem   INTEGER,
+            nivel_sk      TEXT,
+            nivel_sk_ordem INTEGER,
+            nivel_sb      TEXT,
+            nivel_sb_ordem INTEGER,
+            nivel_sem_designacao TEXT,
+            nivel_sem_designacao_ordem INTEGER,
             updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
         );
         """
@@ -88,11 +94,31 @@ def init_db_if_needed() -> None:
             data         TEXT NOT NULL,
             nivel        TEXT NOT NULL,
             nivel_ordem  INTEGER,
+            modalidade   TEXT NOT NULL DEFAULT 'GERAL',
             origem       TEXT NOT NULL DEFAULT 'sync_clientes',
             created_at   TEXT DEFAULT CURRENT_TIMESTAMP
         );
         """
     )
+
+    # Migração leve (caso o DB já exista sem as colunas novas)
+    def _ensure_col(table: str, col: str, coltype: str):
+        cur.execute(f"PRAGMA table_info({table});")
+        cols = {r[1] for r in cur.fetchall()}
+        if col not in cols:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype};")
+
+    for col, typ in [
+        ("nivel_sk", "TEXT"),
+        ("nivel_sk_ordem", "INTEGER"),
+        ("nivel_sb", "TEXT"),
+        ("nivel_sb_ordem", "INTEGER"),
+        ("nivel_sem_designacao", "TEXT"),
+        ("nivel_sem_designacao_ordem", "INTEGER"),
+    ]:
+        _ensure_col("clients", col, typ)
+
+    _ensure_col("level_history", "modalidade", "TEXT")
 
     conn.commit()
     conn.close()
@@ -378,9 +404,25 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
         if not evo_id:
             continue
 
+        # Preferimos usar as colunas já normalizadas pela página Base de Clientes.
         nome_bruto = str(get(row, "Nome", "") or "").strip()
-        nome_limpo, nivel = _extract_nome_e_nivel(nome_bruto)
-        nivel_ordem = LEVEL_ORDER.get(nivel)
+        nome_limpo = str(get(row, "NomeLimpo", "") or "").strip() or nome_bruto
+
+        nivel_geral = get(row, "NivelAtual")
+        nivel_geral = str(nivel_geral).strip() if nivel_geral not in (None, "") else None
+        nivel_ordem = LEVEL_ORDER.get(nivel_geral)
+
+        nivel_sk = get(row, "NivelSK")
+        nivel_sk = str(nivel_sk).strip() if nivel_sk not in (None, "") else None
+        nivel_sk_ordem = LEVEL_ORDER.get(nivel_sk)
+
+        nivel_sb = get(row, "NivelSB")
+        nivel_sb = str(nivel_sb).strip() if nivel_sb not in (None, "") else None
+        nivel_sb_ordem = LEVEL_ORDER.get(nivel_sb)
+
+        nivel_sd = get(row, "NivelSemDesignacao")
+        nivel_sd = str(nivel_sd).strip() if nivel_sd not in (None, "") else None
+        nivel_sd_ordem = LEVEL_ORDER.get(nivel_sd)
 
         sexo = get(row, "Sexo")
         nascimento = get(row, "Nascimento")
@@ -398,11 +440,18 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
 
         # Nível anterior (se já existir cliente)
         cur.execute(
-            "SELECT nivel_atual FROM clients WHERE evo_id = ?",
+            """
+            SELECT nivel_atual, nivel_sk, nivel_sb, nivel_sem_designacao
+            FROM clients
+            WHERE evo_id = ?
+            """,
             (evo_id,),
         )
         row_prev = cur.fetchone()
-        nivel_anterior = row_prev["nivel_atual"] if row_prev else None
+        prev_geral = row_prev["nivel_atual"] if row_prev else None
+        prev_sk = row_prev["nivel_sk"] if row_prev else None
+        prev_sb = row_prev["nivel_sb"] if row_prev else None
+        prev_sd = row_prev["nivel_sem_designacao"] if row_prev else None
 
         # UPSERT do cliente
         cur.execute(
@@ -410,12 +459,22 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
             INSERT INTO clients (
                 evo_id, nome_bruto, nome_limpo, sexo, nascimento, idade,
                 rua, numero, complemento, bairro, cidade, uf, cep,
-                email, telefone, criado_em, nivel_atual, nivel_ordem, updated_at
+                email, telefone, criado_em,
+                nivel_atual, nivel_ordem,
+                nivel_sk, nivel_sk_ordem,
+                nivel_sb, nivel_sb_ordem,
+                nivel_sem_designacao, nivel_sem_designacao_ordem,
+                updated_at
             )
             VALUES (
                 ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+                ?, ?, ?,
+                ?, ?,
+                ?, ?,
+                ?, ?,
+                ?, ?,
+                CURRENT_TIMESTAMP
             )
             ON CONFLICT(evo_id) DO UPDATE SET
                 nome_bruto   = excluded.nome_bruto,
@@ -435,24 +494,40 @@ def sync_clients_from_df(df_clientes: pd.DataFrame) -> int:
                 criado_em    = COALESCE(clients.criado_em, excluded.criado_em),
                 nivel_atual  = excluded.nivel_atual,
                 nivel_ordem  = excluded.nivel_ordem,
+                nivel_sk     = excluded.nivel_sk,
+                nivel_sk_ordem = excluded.nivel_sk_ordem,
+                nivel_sb     = excluded.nivel_sb,
+                nivel_sb_ordem = excluded.nivel_sb_ordem,
+                nivel_sem_designacao = excluded.nivel_sem_designacao,
+                nivel_sem_designacao_ordem = excluded.nivel_sem_designacao_ordem,
                 updated_at   = CURRENT_TIMESTAMP;
             """,
             (
                 evo_id, nome_bruto, nome_limpo, sexo, nascimento, idade,
                 rua, numero, compl, bairro, cidade, uf, cep,
-                email, tel, criado_em, nivel, nivel_ordem
+                email, tel, criado_em,
+                nivel_geral, nivel_ordem,
+                nivel_sk, nivel_sk_ordem,
+                nivel_sb, nivel_sb_ordem,
+                nivel_sd, nivel_sd_ordem,
             ),
         )
 
-        # Se o nível mudou, grava histórico
-        if nivel and nivel != nivel_anterior:
-            cur.execute(
-                """
-                INSERT INTO level_history (evo_id, data, nivel, nivel_ordem, origem)
-                VALUES (?, ?, ?, ?, ?);
-                """,
-                (evo_id, hoje, nivel, nivel_ordem, "sync_clientes"),
-            )
+        # Se algum nível mudou, grava histórico por modalidade
+        def _maybe_log(nivel_novo, nivel_prev, modalidade: str):
+            if nivel_novo and nivel_novo != (nivel_prev or ""):
+                cur.execute(
+                    """
+                    INSERT INTO level_history (evo_id, data, nivel, nivel_ordem, modalidade, origem)
+                    VALUES (?, ?, ?, ?, ?, ?);
+                    """,
+                    (evo_id, hoje, nivel_novo, LEVEL_ORDER.get(nivel_novo), modalidade, "sync_clientes"),
+                )
+
+        _maybe_log(nivel_geral, prev_geral, "GERAL")
+        _maybe_log(nivel_sk, prev_sk, "SK")
+        _maybe_log(nivel_sb, prev_sb, "SB")
+        _maybe_log(nivel_sd, prev_sd, "SEM_DESIGNACAO")
 
         processed += 1
 
@@ -547,4 +622,3 @@ def load_daily_client_counts() -> pd.DataFrame:
     )
     conn.close()
     return df
-
