@@ -35,19 +35,7 @@ try:
     conn = get_connection()
     df_clients = pd.read_sql_query(
         """
-        SELECT
-            evo_id,
-            nome_limpo,
-            nome_bruto,
-            sexo,
-            nivel_atual,
-            nivel_ordem,
-            nivel_sk,
-            nivel_sk_ordem,
-            nivel_sb,
-            nivel_sb_ordem,
-            nivel_sem_designacao,
-            nivel_sem_designacao_ordem
+        SELECT evo_id, nome_limpo, nome_bruto, sexo, nivel_atual, nivel_ordem
         FROM clients
         ORDER BY nome_limpo COLLATE NOCASE;
         """,
@@ -60,25 +48,11 @@ except sqlite3.Error as e:
 finally:
     conn.close()
 # Normalização: string vazia vira None
-for col in [
-    "nivel_atual",
-    "nivel_sk",
-    "nivel_sb",
-    "nivel_sem_designacao",
-]:
-    if col in df_clients.columns:
-        df_clients[col] = df_clients[col].replace("", None)
+df_clients["nivel_atual"] = df_clients["nivel_atual"].replace("", None)
 
-# Contagens (agora por modalidade)
-mask_sk = df_clients["nivel_sk"].notna()
-mask_sb = df_clients["nivel_sb"].notna()
-mask_sd = df_clients["nivel_sem_designacao"].notna()
-mask_any = mask_sk | mask_sb | mask_sd
-
-total_ski = int(mask_sk.sum())
-total_snow = int(mask_sb.sum())
-total_sem_designacao = int(mask_sd.sum())
-total_sem_nivel = int((~mask_any).sum())
+# Contagens corretas
+total_sem_nivel = df_clients["nivel_atual"].isna().sum()
+total_com_nivel = df_clients["nivel_atual"].notna().sum()
 if df_clients.empty:
     st.info(
         "Nenhum cliente encontrado no banco.\n\n"
@@ -88,20 +62,10 @@ if df_clients.empty:
     st.stop()
 
 # Nome amigável para o select na aba "Por cliente"
-def _mk_label(r):
-    sk = r.get("nivel_sk")
-    sb = r.get("nivel_sb")
-    sd = r.get("nivel_sem_designacao")
-    bits = []
-    if pd.notna(sk):
-        bits.append(f"SK {sk}")
-    if pd.notna(sb):
-        bits.append(f"SB {sb}")
-    if pd.notna(sd):
-        bits.append(f"ND {sd}")
-    return f"{r['nome_limpo']} ({' | '.join(bits) if bits else 'sem nível'})"
-
-df_clients["label"] = df_clients.apply(_mk_label, axis=1)
+df_clients["label"] = df_clients.apply(
+    lambda r: f"{r['nome_limpo']} ({r['nivel_atual'] or 'sem nível'})",
+    axis=1,
+)
 
 # ---------------------------------------------------------------------------
 # Abas: Visão geral  /  Por cliente
@@ -112,75 +76,184 @@ tab_visao, tab_cliente = st.tabs(["Visão geral", "Por cliente"])
 # ABA 1: VISÃO GERAL
 # ===========================================================================
 with tab_visao:
-    st.subheader("📊 Distribuição de níveis — agora separado por Ski/Snow")
+    st.subheader("📊 Distribuição de níveis da base de alunos")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Clientes com nível SK", f"{total_ski:,}".replace(",", "."))
-    c2.metric("Clientes com nível SB", f"{total_snow:,}".replace(",", "."))
-    c3.metric("Nível sem designação", f"{total_sem_designacao:,}".replace(",", "."))
-    c4.metric("Sem nível", f"{total_sem_nivel:,}".replace(",", "."))
+    # Monta a distribuição de níveis a partir de df_clients
+    df_dist = (
+        df_clients
+        .assign(nivel=df_clients["nivel_atual"])
+        .groupby("nivel", dropna=False)
+        .size()
+        .reset_index(name="qtd")
+    )
 
-    def _plot_dist(df_src: pd.DataFrame, col_level: str, title: str):
-        if df_src.empty:
-            st.info("Nenhum cliente nesta seção.")
-            return
+    if df_dist.empty:
+        st.info("Nenhum cliente encontrado na base.")
+    else:
+        # Trata sem nível como "0" SOMENTE para o gráfico/tabela
+        df_dist["nivel"] = df_dist["nivel"].fillna("0").astype(str)
 
+        all_levels = ["0"] + LEVELS  # LEVELS = ["1A","1B",...,"4D"]
+
+        # agrega por segurança
         df_dist = (
-            df_src
-            .groupby(col_level, dropna=False)
-            .size()
-            .reset_index(name="qtd")
-            .rename(columns={col_level: "nivel"})
+            df_dist.groupby("nivel", as_index=False)["qtd"]
+                   .sum()
         )
 
-        df_dist["nivel"] = df_dist["nivel"].fillna("0").astype(str)
-        all_levels = ["0"] + LEVELS
+        # garante que todos os níveis existam (mesmo com 0 clientes)
         df_dist = (
-            df_dist.groupby("nivel", as_index=False)["qtd"].sum()
-                   .set_index("nivel")
+            df_dist.set_index("nivel")
                    .reindex(all_levels, fill_value=0)
                    .reset_index()
         )
-        df_dist["nivel"] = pd.Categorical(df_dist["nivel"], categories=all_levels, ordered=True)
 
-        fig = px.bar(
+        # ordenação categórica
+        df_dist["nivel"] = pd.Categorical(
+            df_dist["nivel"],
+            categories=all_levels,
+            ordered=True,
+        )
+
+        # KPIs usando as métricas oficiais calculadas lá em cima
+        colm1, colm2 = st.columns(2)
+        with colm1:
+            st.metric(
+                "Clientes com nível definido",
+                f"{total_com_nivel:,}".replace(",", "."),
+            )
+        with colm2:
+            st.metric(
+                "Clientes sem nível",
+                f"{total_sem_nivel:,}".replace(",", "."),
+            )
+
+        # Gráfico
+        fig_dist = px.bar(
             df_dist,
             x="nivel",
             y="qtd",
-            title=title,
+            title="Distribuição de níveis na base de clientes",
             labels={"nivel": "Nível", "qtd": "Quantidade de clientes"},
         )
-        fig.update_traces(text=df_dist["qtd"], textposition="outside")
-        fig.update_layout(xaxis_title="Nível", yaxis_title="Clientes", uniformtext_minsize=8, uniformtext_mode="hide")
-        st.plotly_chart(fig, use_container_width=True)
+        
+        fig_dist.update_traces(text=df_dist["qtd"], textposition="outside")
+        fig_dist.update_layout(
+            xaxis_title="Nível",
+            yaxis_title="Clientes",
+            uniformtext_minsize=8,
+            uniformtext_mode="hide"
+        )
+        
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+        # Tabela
         st.caption("Tabela de apoio")
-        st.dataframe(df_dist.reset_index(drop=True), use_container_width=True, height=260)
-
-    tsk, tsb, tnd, tnone = st.tabs(["Ski (SK)", "Snowboard (SB)", "Sem designação", "Sem nível"])
-
-    with tsk:
-        _plot_dist(df_clients[df_clients["nivel_sk"].notna()].copy(), "nivel_sk", "Distribuição de níveis — Ski (SK)")
-
-    with tsb:
-        _plot_dist(df_clients[df_clients["nivel_sb"].notna()].copy(), "nivel_sb", "Distribuição de níveis — Snowboard (SB)")
-
-    with tnd:
-        _plot_dist(
-            df_clients[df_clients["nivel_sem_designacao"].notna()].copy(),
-            "nivel_sem_designacao",
-            "Distribuição de níveis — sem designação (não veio SK/SB no nome)",
-        )
-
-    with tnone:
-        st.info(
-            "Clientes que não têm nenhum nível identificado no nome (nem SK, nem SB, nem genérico)."
-        )
-        df_none = df_clients[~(df_clients["nivel_sk"].notna() | df_clients["nivel_sb"].notna() | df_clients["nivel_sem_designacao"].notna())].copy()
         st.dataframe(
-            df_none[["evo_id", "nome_limpo", "nome_bruto", "sexo"]].reset_index(drop=True),
+            df_dist.reset_index(drop=True),
             use_container_width=True,
-            height=380,
+            height=260,
         )
+    
+    # ─────────────────────────────────────────────────────────────
+    # GRÁFICOS ADICIONAIS
+    # ─────────────────────────────────────────────────────────────
+    st.subheader("📊 Visões adicionais de distribuição de nível")
+
+    # Considera apenas quem tem nível definido
+    df_com_nivel = df_clients[df_clients["nivel_atual"].notna()].copy()
+
+    if df_com_nivel.empty:
+        st.info("Nenhum cliente com nível definido para gerar os gráficos adicionais.")
+    else:
+        # Normaliza coluna de nível como categórica ordenada
+        df_com_nivel["nivel"] = pd.Categorical(
+            df_com_nivel["nivel_atual"],
+            categories=LEVELS,
+            ordered=True,
+        )
+
+        # 1) Gráfico de pizza (todos os clientes com nível)
+        df_pizza = (
+            df_com_nivel.groupby("nivel", as_index=False)
+                        .size()
+                        .rename(columns={"size": "qtd"})
+                        .sort_values("nivel")
+        )
+
+        col_pizza, _ = st.columns(2)
+        with col_pizza:
+            fig_pizza = px.pie(
+                df_pizza,
+                names="nivel",
+                values="qtd",
+                title="Distribuição de níveis (apenas quem tem nível)",
+            )
+            fig_pizza.update_traces(textposition="inside",
+                                    textinfo="label+percent+value")
+            st.plotly_chart(fig_pizza, use_container_width=True)
+
+        # 2) Gráfico de barras - apenas homens
+        cols_genero = st.columns(2)
+
+        with cols_genero[0]:
+            df_homem = df_com_nivel[df_com_nivel["sexo"] == "Masculino"].copy()
+            if df_homem.empty:
+                st.info("Nenhum cliente masculino com nível definido.")
+            else:
+                df_homem_grp = (
+                    df_homem.groupby("nivel", as_index=False)
+                            .size()
+                            .rename(columns={"size": "qtd"})
+                            .sort_values("nivel")
+                )
+                fig_homem = px.bar(
+                    df_homem_grp,
+                    x="nivel",
+                    y="qtd",
+                    title="Distribuição de níveis — Masculino",
+                    labels={"nivel": "Nível", "qtd": "Clientes"},
+                )
+                
+                fig_homem.update_traces(text=df_homem_grp["qtd"], textposition="outside")
+                fig_homem.update_layout(
+                    xaxis_title="Nível",
+                    yaxis_title="Clientes",
+                    uniformtext_minsize=8,
+                    uniformtext_mode="hide",
+                )
+                
+                st.plotly_chart(fig_homem, use_container_width=True)
+
+        # 3) Gráfico de barras - apenas mulheres
+        with cols_genero[1]:
+            df_mulher = df_com_nivel[df_com_nivel["sexo"] == "Feminino"].copy()
+            if df_mulher.empty:
+                st.info("Nenhuma cliente feminina com nível definido.")
+            else:
+                df_mulher_grp = (
+                    df_mulher.groupby("nivel", as_index=False)
+                             .size()
+                             .rename(columns={"size": "qtd"})
+                             .sort_values("nivel")
+                )
+                fig_mulher = px.bar(
+                    df_mulher_grp,
+                    x="nivel",
+                    y="qtd",
+                    title="Distribuição de níveis — Feminino",
+                    labels={"nivel": "Nível", "qtd": "Clientes"},
+                )
+                    
+                fig_mulher.update_traces(text=df_mulher_grp["qtd"], textposition="outside")
+                fig_mulher.update_layout(
+                    xaxis_title="Nível",
+                    yaxis_title="Clientes",
+                    uniformtext_minsize=8,
+                    uniformtext_mode="hide",
+                )
+                    
+                st.plotly_chart(fig_mulher, use_container_width=True)
 
     st.divider()
     st.subheader("🕒 Log de mudanças de nível (últimos 10 dias)")
@@ -197,7 +270,6 @@ with tab_visao:
             SELECT
                 lh.id,
                 lh.data,
-                lh.modalidade,
                 lh.nivel,
                 lh.nivel_ordem,
                 lh.origem,
@@ -216,18 +288,6 @@ with tab_visao:
     if df_all.empty:
         st.info("Ainda não há nenhum registro em level_history.")
     else:
-        # Filtro de modalidade (quando existir)
-        if "modalidade" in df_all.columns:
-            mods = [m for m in sorted(df_all["modalidade"].dropna().unique().tolist()) if str(m).strip()]
-            sel_mods = st.multiselect(
-                "Filtrar modalidade",
-                options=mods,
-                default=mods,
-                help="GERAL = melhor nível encontrado; SK = ski; SB = snowboard; SEM_DESIGNACAO = nível sem SK/SB",
-            )
-            if sel_mods:
-                df_all = df_all[df_all["modalidade"].isin(sel_mods)].copy()
-
         # 2) Converte data e garante ordenação
         df_all["data_dt"] = pd.to_datetime(df_all["data"], errors="coerce")
         df_all = df_all.sort_values(["evo_id", "data_dt", "id"])
@@ -342,7 +402,6 @@ with tab_cliente:
             """
             SELECT
                 data,
-                modalidade,
                 nivel,
                 nivel_ordem,
                 origem,
@@ -358,16 +417,14 @@ with tab_cliente:
         conn.close()
 
     # Métricas de topo
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("SK (Ski)", sel_row.get("nivel_sk") or "—")
+        nivel_atual = sel_row["nivel_atual"] or "Não definido"
+        st.metric("Nível atual (último gravado)", nivel_atual)
+
     with col2:
-        st.metric("SB (Snow)", sel_row.get("nivel_sb") or "—")
-    with col3:
-        st.metric("Sem designação", sel_row.get("nivel_sem_designacao") or "—")
-    with col4:
         total_mudancas = len(df_hist)
-        st.metric("Registros no histórico", int(total_mudancas))
+        st.metric("Total de mudanças de nível registradas", int(total_mudancas))
 
     st.divider()
 
@@ -383,18 +440,6 @@ with tab_cliente:
             "na Base de Clientes."
         )
     else:
-        # filtro de modalidade
-        if "modalidade" in df_hist.columns:
-            mods = [m for m in sorted(df_hist["modalidade"].dropna().unique().tolist()) if str(m).strip()]
-            sel_mods = st.multiselect(
-                "Modalidade",
-                options=mods,
-                default=mods,
-                help="GERAL = melhor nível; SK = ski; SB = snowboard; SEM_DESIGNACAO = nível sem SK/SB",
-            )
-            if sel_mods:
-                df_hist = df_hist[df_hist["modalidade"].isin(sel_mods)].copy()
-
         # Ordena por data e prepara para o gráfico
         df_hist_plot = df_hist.sort_values("data").copy()
 
@@ -406,12 +451,11 @@ with tab_cliente:
         # Converte nível textual (1A, 3C, etc.) em índice 0..15
         df_hist_plot["nivel_idx"] = df_hist_plot["nivel"].map(LEVEL_INDEX)
 
-        # Gráfico em degrau (com cor por modalidade)
+        # Gráfico em degrau
         fig = px.line(
             df_hist_plot,
             x="data_dt",
             y="nivel_idx",
-            color="modalidade" if "modalidade" in df_hist_plot.columns else None,
             title="Linha do tempo de níveis",
             markers=True,
             text="nivel",
@@ -443,12 +487,10 @@ with tab_cliente:
     if df_hist.empty:
         st.caption("Nenhum registro ainda.")
     else:
-        cols_show = ["data", "modalidade", "nivel", "origem", "created_at"] if "modalidade" in df_hist.columns else ["data", "nivel", "origem", "created_at"]
-        df_show_cli = df_hist[cols_show].copy()
+        df_show_cli = df_hist[["data", "nivel", "origem", "created_at"]].copy()
         df_show_cli.rename(
             columns={
                 "data": "Data",
-                "modalidade": "Modalidade",
                 "nivel": "Nível",
                 "origem": "Origem",
                 "created_at": "Registrado em",
