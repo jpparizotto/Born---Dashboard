@@ -97,71 +97,62 @@ def init_db_if_needed() -> None:
     conn.commit()
     conn.close()
 
-def _upload_bytes_to_github(path_in_repo: str, content: bytes, message: str) -> None:
+def _upload_bytes_to_github(path_in_repo: str, content: bytes, message: str) -> dict:
     """
     Cria/atualiza um arquivo no GitHub usando a API de contents.
-    Não levanta erro para não derrubar a app se falhar.
+    Levanta erro se falhar (pra Streamlit mostrar na tela).
+    Retorna o JSON da resposta do PUT (inclui commit, content, etc.)
     """
     headers = _github_headers()
     if not headers:
-        # Se não tiver token configurado, não faz nada.
-        print("[backup_db_to_github] GITHUB_TOKEN não configurado, ignorando backup.")
-        return
+        raise RuntimeError("GITHUB_TOKEN não configurado (sem backup possível).")
 
     url = _github_file_url(path_in_repo)
 
-    try:
-        # Descobre se já existe para pegar o sha
-        resp = requests.get(url, headers=headers, timeout=10)
-        sha = resp.json().get("sha") if resp.status_code == 200 else None
+    # 1) Descobre o SHA do arquivo na branch correta (se existir)
+    resp = requests.get(url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=30)
 
-        data = {
-            "message": message,
-            "content": base64.b64encode(content).decode("utf-8"),
-            "branch": GITHUB_BRANCH,
-        }
-        if sha:
-            data["sha"] = sha
+    if resp.status_code == 200:
+        sha = resp.json().get("sha")
+    elif resp.status_code == 404:
+        sha = None
+    else:
+        raise RuntimeError(f"[GitHub GET] {resp.status_code} - {resp.text}")
 
-        put_resp = requests.put(url, headers=headers, json=data, timeout=10)
-        put_resp.raise_for_status()
-    except Exception as e:
-        # Log simples – não quebra a app
-        print(f"[backup_db_to_github] Erro ao subir {path_in_repo}: {e}")
+    data = {
+        "message": message,
+        "content": base64.b64encode(content).decode("utf-8"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        data["sha"] = sha
+
+    put_resp = requests.put(url, headers=headers, json=data, timeout=30)
+    if put_resp.status_code not in (200, 201):
+        raise RuntimeError(f"[GitHub PUT] {put_resp.status_code} - {put_resp.text}")
+
+    return put_resp.json()
         
-def backup_db_to_github() -> None:
+def backup_db_to_github() -> dict:
     """
     Exporta as tabelas principais para CSV e envia para o GitHub.
-
-    Arquivos criados no repositório:
-      - backups/clients.csv
-      - backups/level_history.csv
-      - backups/daily_clients.csv
+    Retorna dict com status por tabela.
     """
-    headers = _github_headers()
-    if not headers:
-        # Se não tiver token, simplesmente não faz backup
-        return
+    init_db_if_needed()
+    conn = get_connection()
 
-    try:
-        conn = get_connection()
+    results = {}
+    for table in ["clients", "level_history", "daily_clients"]:
+        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
 
-        for table in ["clients", "level_history", "daily_clients"]:
-            try:
-                df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-            except Exception as e:
-                print(f"[backup_db_to_github] Não foi possível ler tabela {table}: {e}")
-                continue
+        path_repo = f"backups/{table}.csv"
+        msg = f"Snapshot automático da tabela {table}"
 
-            csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-            path_repo = f"backups/{table}.csv"
-            msg = f"Snapshot automático da tabela {table}"
-            _upload_bytes_to_github(path_repo, csv_bytes, msg)
+        results[table] = _upload_bytes_to_github(path_repo, csv_bytes, msg)
 
-        print("[backup_db_to_github] Backup concluído.")
-        
-    except Exception as e:
-        print("[backup_db_to_github] Erro geral ao fazer backup:", e)
+    conn.close()
+    return results
 
 def wipe_db() -> None:
     """Apaga completamente o banco (usado só manualmente / debug)."""
@@ -215,32 +206,19 @@ def restore_db_from_github() -> int:
 
     return total_rows
 
-def backup_acidentes_to_github() -> None:
-    """
-    Faz backup do arquivo de acidentes (data/acidentes.csv) para o GitHub
-    em backups/acidentes.csv, usando a mesma infraestrutura de backup do DB.
-    """
+def backup_acidentes_to_github() -> dict:
     from pathlib import Path
 
     csv_path = Path(ACCIDENTS_CSV_PATH)
     if not csv_path.exists():
-        print("[backup_acidentes_to_github] Arquivo de acidentes não encontrado, nada para fazer.")
-        return
+        raise FileNotFoundError("Arquivo de acidentes não encontrado.")
 
-    try:
-        with csv_path.open("rb") as f:
-            content = f.read()
-
-        # Reaproveita o helper já usado no backup do banco
-        _upload_bytes_to_github(
-            "backups/acidentes.csv",
-            content,
-            "Snapshot automático do arquivo de acidentes.csv",
-        )
-        print("[backup_acidentes_to_github] Backup de acidentes concluído.")
-    except Exception as e:
-        print("[backup_acidentes_to_github] Erro ao fazer backup de acidentes:", e)
-
+    content = csv_path.read_bytes()
+    return _upload_bytes_to_github(
+        "backups/acidentes.csv",
+        content,
+        "Snapshot automático do arquivo de acidentes.csv",
+    )
 
 def restore_acidentes_from_github() -> int:
     """
