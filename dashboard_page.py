@@ -41,6 +41,18 @@ DAYS_AHEAD_DEFAULT = 21
 # DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
 
 # ──────────────────────────────────────────────────────────────────────────────
+# EVO ABC (NÍVEIS) — headers via Secrets
+# ──────────────────────────────────────────────────────────────────────────────
+ABC_BASE_URL = "https://evo-abc-api.w12app.com.br/api/v1"
+
+EVO_ABC_BEARER = st.secrets.get("EVO_ABC_BEARER", os.environ.get("EVO_ABC_BEARER", ""))
+EVO_ABC_CHAVEIDFILIAL = st.secrets.get("EVO_ABC_CHAVEIDFILIAL", os.environ.get("EVO_ABC_CHAVEIDFILIAL", ""))
+EVO_ABC_CHAVEIDW12 = st.secrets.get("EVO_ABC_CHAVEIDW12", os.environ.get("EVO_ABC_CHAVEIDW12", ""))
+EVO_ABC_DNS = st.secrets.get("EVO_ABC_DNS", os.environ.get("EVO_ABC_DNS", "evo"))
+EVO_ABC_FILIAL = st.secrets.get("EVO_ABC_FILIAL", os.environ.get("EVO_ABC_FILIAL", ""))
+EVO_ABC_IDW12 = st.secrets.get("EVO_ABC_IDW12", os.environ.get("EVO_ABC_IDW12", ""))
+
+# ──────────────────────────────────────────────────────────────────────────────
 # HELPERS GERAIS
 # ──────────────────────────────────────────────────────────────────────────────
 def _read_csv_safely(path: str) -> pd.DataFrame:
@@ -67,6 +79,98 @@ def _find_latest_slots_csv():
     pattern = os.path.join(DATA_DIR, "slots_*.csv")
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
     return files[0] if files else None
+
+def _abc_headers():
+    if not EVO_ABC_BEARER:
+        raise RuntimeError("EVO_ABC_BEARER ausente em Secrets (Bearer ...).")
+    return {
+        "accept": "application/json, text/plain, */*",
+        "authorization": EVO_ABC_BEARER,  # deve estar como "Bearer xxx"
+        "chaveidfilial": EVO_ABC_CHAVEIDFILIAL,
+        "chaveidw12": EVO_ABC_CHAVEIDW12,
+        "dns": EVO_ABC_DNS,
+        "filial": str(EVO_ABC_FILIAL),
+        "idw12": str(EVO_ABC_IDW12),
+        "origin": "https://evo5.w12app.com.br",
+        "referer": "https://evo5.w12app.com.br/",
+    }
+
+def _abc_get_cliente_nivel(id_cliente: int):
+    url = f"{ABC_BASE_URL}/cliente-nivel"
+    r = requests.get(
+        url,
+        headers=_abc_headers(),
+        params={"idCliente": int(id_cliente)},
+        timeout=30,
+        verify=VERIFY_SSL,
+    )
+    if r.status_code in (200, 204):
+        if r.status_code == 204:
+            return []
+        try:
+            return r.json()
+        except Exception:
+            return []
+    # se token expirar, aqui vai aparecer 401/403 — bom pra diagnosticar
+    raise RuntimeError(f"ABC cliente-nivel {id_cliente} -> {r.status_code} | {r.text[:300]}")
+
+def _unwrap_list(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("data", "items", "results", "list"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return v
+    return []
+
+def _parse_levels(payload):
+    """
+    Retorna {"ski": "...", "snow": "..."} (strings) ou None.
+    Parser tolerante (não sabemos o schema exato do JSON).
+    """
+    items = _unwrap_list(payload)
+    out = {"ski": None, "snow": None}
+
+    def pick(d, *keys):
+        for k in keys:
+            v = d.get(k) if isinstance(d, dict) else None
+            if v not in (None, "", []):
+                return v
+        return None
+
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+
+        modality = pick(it, "modalidade", "modality", "tipo", "categoria", "sport", "disciplina", "nomeCarteira", "carteira")
+        level = pick(it, "nivelAtual", "currentLevel", "nivel", "level", "siglaNivel", "codigoNivel", "descricaoNivel", "descricao")
+
+        mod_s = str(modality or "").lower()
+        lvl_s = str(level).strip() if level is not None else None
+
+        if not lvl_s:
+            continue
+
+        if "ski" in mod_s:
+            out["ski"] = lvl_s
+        elif "snow" in mod_s or "snowboard" in mod_s:
+            out["snow"] = lvl_s
+
+    # fallback: se vier só 1 item sem modalidade clara
+    if items and (out["ski"] is None and out["snow"] is None):
+        it0 = items[0]
+        if isinstance(it0, dict):
+            level = it0.get("nivelAtual") or it0.get("nivel") or it0.get("level") or it0.get("siglaNivel") or it0.get("codigoNivel")
+            if level:
+                out["ski"] = str(level).strip()  # assume como “principal” (ajustável)
+
+    return out
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_levels_for_cliente(id_cliente: int):
+    payload = _abc_get_cliente_nivel(int(id_cliente))
+    return _parse_levels(payload)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -327,14 +431,16 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
     except Exception:
         return {}
 
-def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
+def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]:
     if not isinstance(detail, dict):
         return []
-    # horário alvo
+
     if not target_start:
         target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
 
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
+    id_keys   = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
+
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
     def _name(o):
@@ -346,7 +452,24 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
             return o.strip()
         return None
 
-    # 1) Estrutura por sessões (preferencial)
+    def _id(o):
+        if isinstance(o, dict):
+            for k in id_keys:
+                v = o.get(k)
+                if v not in (None, "", []):
+                    try:
+                        return int(v)
+                    except Exception:
+                        pass
+        return None
+
+    def _pack(o):
+        n = _name(o)
+        if not n:
+            return None
+        return {"name": n, "idCliente": _id(o)}
+
+    # 1) Preferencial: estrutura por sessões
     for sess_key in ["sessions", "classes", "scheduleItems"]:
         sess_list = detail.get(sess_key)
         if isinstance(sess_list, list) and sess_list:
@@ -359,11 +482,15 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
                 for lk in list_keys:
                     lst = sess.get(lk)
                     if isinstance(lst, list) and lst:
-                        return [n for it in lst if (n := _name(it))]
-            # se nenhuma sessao combina, seguimos para leitura direta
+                        packed = []
+                        for it in lst:
+                            rec = _pack(it)
+                            if rec:
+                                packed.append(rec)
+                        return packed
 
-    # 2) Leitura direta (sem camada de 'sessions'), filtrando por horário por item se existir
-    alunos = []
+    # 2) Direto
+    packed = []
     for lk in list_keys:
         lst = detail.get(lk)
         if isinstance(lst, list):
@@ -371,14 +498,17 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[str]:
                 item_start = str(_first(it, "startTime", "hourStart", "timeStart") or "").strip()
                 if item_start and target_start and item_start != target_start:
                     continue
-                if (n := _name(it)):
-                    alunos.append(n)
+                rec = _pack(it)
+                if rec:
+                    packed.append(rec)
             break
         elif isinstance(lst, dict):
-            if (n := _name(lst)):
-                alunos.append(n)
+            rec = _pack(lst)
+            if rec:
+                packed.append(rec)
             break
-    return alunos
+
+    return packed
     
 def _extract_professor(item):
     # tenta chaves diretas
@@ -526,21 +656,36 @@ def _materialize_rows(atividades, agenda_items):
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
 
-        # ── Alunos (detail), filtrando pelo horário real do slot
         alunos = _extract_alunos(detail, target_start=(hour_start or None)) or []
-
-        # ── Consistência pelos números (corta vazamento de nomes)
+        
+        # Consistência pelos números
         filled_calc = ((capacity or 0) - (available or 0)) if filled is None else filled
         filled_calc = max(0, filled_calc)
-        expected    = min(filled_calc, (capacity or 0))   # máx. nomes = bookados, limitado à capacidade
+        expected    = min(filled_calc, (capacity or 0))
         alunos      = alunos[:expected]
-
-        # ── Monta Aluno 1..3
+        
+        # Monta Aluno 1..3 + Níveis
         aluno_cols = ["vazio", "vazio", "vazio"]
+        nivel_ski_cols = ["", "", ""]
+        nivel_snow_cols = ["", "", ""]
+        
         for i in range(min(3, len(alunos))):
-            aluno_cols[i] = alunos[i]
+            aluno_cols[i] = alunos[i].get("name") or "vazio"
+            idc = alunos[i].get("idCliente")
+            if idc:
+                try:
+                    lv = _cached_levels_for_cliente(int(idc))
+                    nivel_ski_cols[i] = lv.get("ski") or ""
+                    nivel_snow_cols[i] = lv.get("snow") or ""
+                except Exception:
+                    # se falhar nível, não quebra a grade
+                    nivel_ski_cols[i] = ""
+                    nivel_snow_cols[i] = ""
+        
         if capacity == 2:
             aluno_cols[2] = "N.A"
+            nivel_ski_cols[2] = ""
+            nivel_snow_cols[2] = ""
 
         # ── Linha
         if date_val:
@@ -560,6 +705,12 @@ def _materialize_rows(atividades, agenda_items):
                 "Aluno 1": aluno_cols[0],
                 "Aluno 2": aluno_cols[1],
                 "Aluno 3": aluno_cols[2],
+                "Aluno 1 - Nível Ski":  nivel_ski_cols[0],
+                "Aluno 1 - Nível Snow": nivel_snow_cols[0],
+                "Aluno 2 - Nível Ski":  nivel_ski_cols[1],
+                "Aluno 2 - Nível Snow": nivel_snow_cols[1],
+                "Aluno 3 - Nível Ski":  nivel_ski_cols[2],
+                "Aluno 3 - Nível Snow": nivel_snow_cols[2],
             })
 
     # ── Ordena e aplica fallback A/B para pistas “(Sem pista)”
@@ -1264,7 +1415,10 @@ with col_c:
     selected_cols = [
         "Pista", "Data", "Início", "Fim", "Atividade",
         "Capacidade", "Bookados", "Disponíveis",
-        "Professor", "Aluno 1", "Aluno 2", "Aluno 3",
+        "Professor",
+        "Aluno 1", "Aluno 1 - Nível Ski", "Aluno 1 - Nível Snow",
+        "Aluno 2", "Aluno 2 - Nível Ski", "Aluno 2 - Nível Snow",
+        "Aluno 3", "Aluno 3 - Nível Ski", "Aluno 3 - Nível Snow",
     ]
 
     # 1) Ordena primeiro no df original (usando só chaves que existirem)
@@ -1374,6 +1528,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
