@@ -44,6 +44,7 @@ COLUMNS = [
     "descricao",
 ]
 
+
 def safe_rerun():
     """
     Tenta recarregar o app usando st.rerun (novo)
@@ -55,6 +56,7 @@ def safe_rerun():
     elif hasattr(st, "experimental_rerun"):
         st.experimental_rerun()
 
+
 def load_acidentes_df() -> pd.DataFrame:
     os.makedirs(DATA_PATH, exist_ok=True)
     if os.path.exists(CSV_PATH):
@@ -62,7 +64,7 @@ def load_acidentes_df() -> pd.DataFrame:
 
         # ajustes de tipos
         if "data" in df.columns:
-            df["data"] = pd.to_datetime(df["data"]).dt.date
+            df["data"] = pd.to_datetime(df["data"], errors="coerce").dt.date
         if "hora" in df.columns:
             df["hora"] = pd.to_datetime(
                 df["hora"], format="%H:%M:%S", errors="coerce"
@@ -73,7 +75,12 @@ def load_acidentes_df() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        return df
+        # garante todas as colunas esperadas
+        for c in COLUMNS:
+            if c not in df.columns:
+                df[c] = None
+
+        return df[COLUMNS]
     else:
         return pd.DataFrame(columns=COLUMNS)
 
@@ -83,6 +90,47 @@ def save_acidentes_df(df: pd.DataFrame) -> None:
     df_to_save["data"] = df_to_save["data"].astype(str)
     df_to_save["hora"] = df_to_save["hora"].astype(str)
     df_to_save.to_csv(CSV_PATH, sep=";", index=False)
+
+
+def pie_acidentes(df_in: pd.DataFrame, col: str, title: str):
+    """
+    Gera gráfico de pizza com:
+    - % e número absoluto dentro de cada fatia
+    - ordem decrescente por quantidade
+    """
+    if df_in.empty or col not in df_in.columns:
+        st.info("Sem dados para exibir.")
+        return
+
+    df_valid = df_in[df_in[col].notna() & (df_in[col].astype(str).str.strip() != "")]
+    if df_valid.empty:
+        st.info("Sem dados para exibir.")
+        return
+
+    g = (
+        df_valid.groupby(col)
+        .size()
+        .reset_index(name="qtd")
+        .sort_values("qtd", ascending=False)
+    )
+
+    fig = px.pie(
+        g,
+        names=col,
+        values="qtd",
+        title=title,
+        hole=0,  # 0 = pizza “cheia”; se quiser donut, troque para 0.4 por exemplo
+    )
+    # mostra percent + absoluto dentro da fatia
+    fig.update_traces(
+        textposition="inside",
+        textinfo="percent+value",
+    )
+    fig.update_layout(
+        legend_title_text=col.replace("_", " ").title(),
+        margin=dict(l=10, r=10, t=50, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # ─────────────────────────────────────────────────────────
@@ -200,8 +248,6 @@ if submitted:
         else:
             st.success("Reporte salvo com sucesso e backup enviado para o GitHub!")
 
-   
-
 # ─────────────────────────────────────────────────────────
 # FILTROS E VISUALIZAÇÃO DA BASE
 # ─────────────────────────────────────────────────────────
@@ -303,8 +349,6 @@ else:
 
             row_sel = df.loc[selected_row_id]
 
-            # sufixo único por acidente selecionado, para que os widgets
-            # não "grudem" no primeiro acidente carregado
             suffix = f"_{selected_row_id}"
 
             st.markdown("#### ✏️ Editar acidente selecionado")
@@ -393,8 +437,7 @@ else:
                         ["Início", "Meio", "Final"],
                         index=["Início", "Meio", "Final"].index(
                             row_sel.get("momento_aula")
-                            if row_sel.get("momento_aula")
-                            in ["Início", "Meio", "Final"]
+                            if row_sel.get("momento_aula") in ["Início", "Meio", "Final"]
                             else "Meio"
                         ),
                         key=f"edit_momento_aula{suffix}",
@@ -405,8 +448,7 @@ else:
                         ["Leve", "Moderada", "Grave"],
                         index=["Leve", "Moderada", "Grave"].index(
                             row_sel.get("gravidade")
-                            if row_sel.get("gravidade")
-                            in ["Leve", "Moderada", "Grave"]
+                            if row_sel.get("gravidade") in ["Leve", "Moderada", "Grave"]
                             else "Leve"
                         ),
                         key=f"edit_gravidade{suffix}",
@@ -542,35 +584,39 @@ else:
         )
         st.plotly_chart(fig_dia, use_container_width=True)
 
+    # ─────────────────────────────────────────────────────
+    # GRÁFICOS (3 COLUNAS)
+    # ─────────────────────────────────────────────────────
     cols_grafs = st.columns(3)
 
+    # 1) Momento da aula (pizza)
     with cols_grafs[0]:
-        if df_filtrado["momento_aula"].notna().any():
-            g_momento = (
-                df_filtrado.groupby("momento_aula").size().reset_index(name="qtd")
-            )
-            fig_momento = px.bar(
-                g_momento,
-                x="momento_aula",
-                y="qtd",
-                title="Acidentes por momento da aula",
-            )
-            st.plotly_chart(fig_momento, use_container_width=True)
+        pie_acidentes(
+            df_filtrado,
+            col="momento_aula",
+            title="Acidentes por momento da aula",
+        )
 
+    # 2) Pista (pizza)
     with cols_grafs[1]:
-        if df_filtrado["pista"].notna().any():
-            g_pista = df_filtrado.groupby("pista").size().reset_index(name="qtd")
-            fig_pista = px.bar(
-                g_pista, x="pista", y="qtd", title="Acidentes por pista"
-            )
-            st.plotly_chart(fig_pista, use_container_width=True)
+        pie_acidentes(
+            df_filtrado,
+            col="pista",
+            title="Acidentes por pista",
+        )
 
+    # 3) Gravidade (pizza)
     with cols_grafs[2]:
-        if df_filtrado["professor"].notna().any():
-            g_prof = (
-                df_filtrado.groupby("professor").size().reset_index(name="qtd")
-            )
-            fig_prof = px.bar(
-                g_prof, x="professor", y="qtd", title="Acidentes por professor"
-            )
-            st.plotly_chart(fig_prof, use_container_width=True)
+        pie_acidentes(
+            df_filtrado,
+            col="gravidade",
+            title="Gravidade dos acidentes",
+        )
+
+    st.markdown("---")
+    if df_filtrado["professor"].notna().any():
+        g_prof = df_filtrado.groupby("professor").size().reset_index(name="qtd")
+        fig_prof = px.bar(
+            g_prof, x="professor", y="qtd", title="Acidentes por professor"
+        )
+        st.plotly_chart(fig_prof, use_container_width=True)
