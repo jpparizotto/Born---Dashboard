@@ -59,14 +59,16 @@ st.write(
 if st.button("📤 Gerar backup completo do banco no GitHub"):
     with st.spinner("Gerando backup e enviando para o GitHub..."):
         try:
-            backup_db_to_github()
+            res = backup_db_to_github()
         except Exception as e:
             st.error(f"Erro ao fazer backup do banco: {e}")
         else:
-            st.success(
-                "Backup do banco concluído e enviado para o GitHub com sucesso! "
-                "Se precisar restaurar no futuro, use o botão de restauração acima."
-            )
+            st.success("Backup enviado para o GitHub com sucesso!")
+            # mostra o commit sha do 1º arquivo (só pra comprovar)
+            any_table = next(iter(res.keys()))
+            sha = res[any_table].get("commit", {}).get("sha")
+            if sha:
+                st.caption(f"Commit: {sha}")
 
 # ─────────────────────────────────────────────────────────
 # SEÇÃO 3 — RESTAURAR ARQUIVO DE ACIDENTES
