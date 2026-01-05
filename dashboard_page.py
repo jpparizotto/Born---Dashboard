@@ -104,15 +104,22 @@ def _abc_get_cliente_nivel(id_cliente: int):
         timeout=30,
         verify=VERIFY_SSL,
     )
+
+    # sempre tente interpretar o body
+    try:
+        body_json = r.json()
+    except Exception:
+        body_json = None
+
     if r.status_code in (200, 204):
-        if r.status_code == 204:
-            return []
-        try:
-            return r.json()
-        except Exception:
-            return []
-    # se token expirar, aqui vai aparecer 401/403 — bom pra diagnosticar
-    raise RuntimeError(f"ABC cliente-nivel {id_cliente} -> {r.status_code} | {r.text[:300]}")
+        return [] if r.status_code == 204 else (body_json if body_json is not None else [])
+
+    # diagnóstico melhor
+    snippet = (r.text or "")[:500]
+    raise RuntimeError(
+        f"ABC cliente-nivel idCliente={id_cliente} -> HTTP {r.status_code}\n"
+        f"Body(500): {snippet}"
+    )
 
 def _unwrap_list(payload):
     if isinstance(payload, list):
@@ -1528,9 +1535,27 @@ st.download_button(
 )
 
 if st.button("Testar nível (ABC)"):
-    st.write(_abc_get_cliente_nivel(1237792))
+    try:
+        st.write("Headers (sem token):", {
+            "dns": EVO_ABC_DNS,
+            "filial": EVO_ABC_FILIAL,
+            "idw12": EVO_ABC_IDW12,
+            "chaveidfilial_len": len(EVO_ABC_CHAVEIDFILIAL or ""),
+            "chaveidw12_len": len(EVO_ABC_CHAVEIDW12 or ""),
+            "bearer_startswith": (EVO_ABC_BEARER or "")[:10],
+            "bearer_len": len(EVO_ABC_BEARER or ""),
+        })
+
+        data = _abc_get_cliente_nivel(1237792)
+        st.success("✅ Chamou cliente-nivel com sucesso")
+        st.write(data)
+
+    except Exception as e:
+        st.error("❌ Falhou ao chamar cliente-nivel")
+        st.exception(e)
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
