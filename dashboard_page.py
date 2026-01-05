@@ -1527,7 +1527,11 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
+if st.button("Testar nível (ABC)"):
+    st.write(_abc_get_cliente_nivel(1237792))
+
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
