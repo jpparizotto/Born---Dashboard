@@ -41,19 +41,17 @@ DAYS_AHEAD_DEFAULT = 21
 # DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# EVO ABC (NÍVEIS) — headers via Secrets
+# NÍVEIS (DICIONÁRIO VIA CSV NO GITHUB)
+# - Enquanto a EVO não libera o endpoint oficial, carregamos um CSV público (raw do GitHub)
+# - O CSV deve ter pelo menos: idCliente ; niveis
+#   (niveis pode conter histórico separado por vírgula, ex: "1ASK,1CSK,2ASK,3ASB")
 # ──────────────────────────────────────────────────────────────────────────────
-ABC_BASE_URL = "https://evo-abc-api.w12app.com.br/api/v1"
-
-EVO_ABC_BEARER = st.secrets.get("EVO_ABC_BEARER", os.environ.get("EVO_ABC_BEARER", ""))
-EVO_ABC_CHAVEIDFILIAL = st.secrets.get("EVO_ABC_CHAVEIDFILIAL", os.environ.get("EVO_ABC_CHAVEIDFILIAL", ""))
-EVO_ABC_CHAVEIDW12 = st.secrets.get("EVO_ABC_CHAVEIDW12", os.environ.get("EVO_ABC_CHAVEIDW12", ""))
-EVO_ABC_DNS = st.secrets.get("EVO_ABC_DNS", os.environ.get("EVO_ABC_DNS", "evo"))
-EVO_ABC_FILIAL = st.secrets.get("EVO_ABC_FILIAL", os.environ.get("EVO_ABC_FILIAL", ""))
-EVO_ABC_IDW12 = st.secrets.get("EVO_ABC_IDW12", os.environ.get("EVO_ABC_IDW12", ""))
+LEVELS_CSV_URL = st.secrets.get("LEVELS_CSV_URL", os.environ.get("LEVELS_CSV_URL", ""))  # raw github (opcional)
+LEVELS_CSV_LOCAL = "data/clientes_niveis.csv"  # fallback local (opcional)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS GERAIS
+
 # ──────────────────────────────────────────────────────────────────────────────
 def _read_csv_safely(path: str) -> pd.DataFrame:
     try:
@@ -80,104 +78,78 @@ def _find_latest_slots_csv():
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
     return files[0] if files else None
 
-def _abc_headers():
-    if not EVO_ABC_BEARER:
-        raise RuntimeError("EVO_ABC_BEARER ausente em Secrets (Bearer ...).")
-    return {
-        "accept": "application/json, text/plain, */*",
-        "authorization": EVO_ABC_BEARER,  # deve estar como "Bearer xxx"
-        "chaveidfilial": EVO_ABC_CHAVEIDFILIAL,
-        "chaveidw12": EVO_ABC_CHAVEIDW12,
-        "dns": EVO_ABC_DNS,
-        "filial": str(EVO_ABC_FILIAL),
-        "idw12": str(EVO_ABC_IDW12),
-        "origin": "https://evo5.w12app.com.br",
-        "referer": "https://evo5.w12app.com.br/",
-    }
+import re
 
-def _abc_get_cliente_nivel(id_cliente: int):
-    url = f"{ABC_BASE_URL}/cliente-nivel"
-    r = requests.get(
-        url,
-        headers=_abc_headers(),
-        params={"idCliente": int(id_cliente)},
-        timeout=30,
-        verify=VERIFY_SSL,
-    )
+def _normalize_level_code(code: str) -> str:
+    c = (code or "").strip().upper()
+    if not c:
+        return ""
+    # typos comuns
+    c = c.replace("SKK", "SK")
+    c = c.replace("SBB", "SB")
+    # remove caracteres estranhos
+    c = re.sub(r"[^0-9A-Z]", "", c)
+    return c
 
-    # sempre tente interpretar o body
-    try:
-        body_json = r.json()
-    except Exception:
-        body_json = None
+def _parse_levels_history(niveis_raw: str | None) -> dict:
+    """Retorna {"ski": "<ultimo SK>", "snow": "<ultimo SB>"}."""
+    out = {"ski": "", "snow": ""}
+    if niveis_raw is None or (isinstance(niveis_raw, float) and pd.isna(niveis_raw)):
+        return out
 
-    if r.status_code in (200, 204):
-        return [] if r.status_code == 204 else (body_json if body_json is not None else [])
+    s = str(niveis_raw).strip()
+    if not s:
+        return out
 
-    # diagnóstico melhor
-    snippet = (r.text or "")[:500]
-    raise RuntimeError(
-        f"ABC cliente-nivel idCliente={id_cliente} -> HTTP {r.status_code}\n"
-        f"Body(500): {snippet}"
-    )
+    # histórico separado por vírgulas (às vezes vem com ; | /)
+    parts = [p.strip() for p in re.split(r"[,\|;/]+", s) if p.strip()]
+    parts = [_normalize_level_code(p) for p in parts if p.strip()]
 
-def _unwrap_list(payload):
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        for k in ("data", "items", "results", "list"):
-            v = payload.get(k)
-            if isinstance(v, list):
-                return v
-    return []
-
-def _parse_levels(payload):
-    """
-    Retorna {"ski": "...", "snow": "..."} (strings) ou None.
-    Parser tolerante (não sabemos o schema exato do JSON).
-    """
-    items = _unwrap_list(payload)
-    out = {"ski": None, "snow": None}
-
-    def pick(d, *keys):
-        for k in keys:
-            v = d.get(k) if isinstance(d, dict) else None
-            if v not in (None, "", []):
-                return v
-        return None
-
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-
-        modality = pick(it, "modalidade", "modality", "tipo", "categoria", "sport", "disciplina", "nomeCarteira", "carteira")
-        level = pick(it, "nivelAtual", "currentLevel", "nivel", "level", "siglaNivel", "codigoNivel", "descricaoNivel", "descricao")
-
-        mod_s = str(modality or "").lower()
-        lvl_s = str(level).strip() if level is not None else None
-
-        if not lvl_s:
-            continue
-
-        if "ski" in mod_s:
-            out["ski"] = lvl_s
-        elif "snow" in mod_s or "snowboard" in mod_s:
-            out["snow"] = lvl_s
-
-    # fallback: se vier só 1 item sem modalidade clara
-    if items and (out["ski"] is None and out["snow"] is None):
-        it0 = items[0]
-        if isinstance(it0, dict):
-            level = it0.get("nivelAtual") or it0.get("nivel") or it0.get("level") or it0.get("siglaNivel") or it0.get("codigoNivel")
-            if level:
-                out["ski"] = str(level).strip()  # assume como “principal” (ajustável)
-
+    for p in reversed(parts):  # pega o mais da direita
+        if not out["ski"] and p.endswith("SK"):
+            out["ski"] = p
+        if not out["snow"] and p.endswith("SB"):
+            out["snow"] = p
+        if out["ski"] and out["snow"]:
+            break
     return out
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _cached_levels_for_cliente(id_cliente: int):
-    payload = _abc_get_cliente_nivel(int(id_cliente))
-    return _parse_levels(payload)
+@st.cache_data(show_spinner=False, ttl=6 * 3600)
+def _load_levels_dict() -> dict[int, dict]:
+    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local)."""
+    # 1) URL (recomendado)
+    if LEVELS_CSV_URL:
+        df_lv = pd.read_csv(LEVELS_CSV_URL, sep=";", dtype=str)
+    else:
+        # 2) fallback local (para desenvolvimento)
+        if os.path.exists(LEVELS_CSV_LOCAL):
+            df_lv = pd.read_csv(LEVELS_CSV_LOCAL, sep=";", dtype=str)
+        else:
+            return {}
+
+    # normaliza colunas
+    cols = {c: c.strip() for c in df_lv.columns}
+    df_lv = df_lv.rename(columns=cols)
+
+    if "idCliente" not in df_lv.columns:
+        return {}
+
+    # alguns exports podem vir como "niveis" ou "Niveis"
+    col_niveis = "niveis" if "niveis" in df_lv.columns else ("Niveis" if "Niveis" in df_lv.columns else None)
+    if not col_niveis:
+        # sem coluna de níveis, não dá pra preencher
+        return {}
+
+    out: dict[int, dict] = {}
+    for _, row in df_lv.iterrows():
+        try:
+            idc = int(str(row.get("idCliente", "")).strip())
+        except Exception:
+            continue
+        lv = _parse_levels_history(row.get(col_niveis))
+        out[idc] = lv
+
+    return out
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -595,7 +567,7 @@ def _extract_pista(container) -> str | None:
 
     return None
 
-def _materialize_rows(atividades, agenda_items):
+def _materialize_rows(atividades, agenda_items, levels_dict):
     rows = []
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
 
@@ -681,13 +653,13 @@ def _materialize_rows(atividades, agenda_items):
             idc = alunos[i].get("idCliente")
             if idc:
                 try:
-                    lv = _cached_levels_for_cliente(int(idc))
-                    nivel_ski_cols[i] = lv.get("ski") or ""
-                    nivel_snow_cols[i] = lv.get("snow") or ""
+                    idc_i = int(idc)
                 except Exception:
-                    # se falhar nível, não quebra a grade
-                    nivel_ski_cols[i] = ""
-                    nivel_snow_cols[i] = ""
+                    idc_i = None
+                if idc_i is not None:
+                    lv = levels_dict.get(idc_i) or {}
+                    nivel_ski_cols[i] = lv.get("ski", "") or ""
+                    nivel_snow_cols[i] = lv.get("snow", "") or ""
         
         if capacity == 2:
             aluno_cols[2] = "N.A"
@@ -764,7 +736,8 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
 
     atividades = _listar_atividades()
     agenda_all = _fetch_agenda_periodo(df_iso_from, df_iso_to)
-    rows = _materialize_rows(atividades, agenda_all)
+    levels_dict = _load_levels_dict()
+    rows = _materialize_rows(atividades, agenda_all, levels_dict)
     if not rows:
         raise RuntimeError("Nenhum slot retornado pela API no período solicitado.")
 
@@ -1128,33 +1101,6 @@ with kpi1: _kpi_block("Ocupação média", f"{occ_overall:.1f}%")
 with kpi2: _kpi_block("Vagas (capacidade)", f"{total_capacity}")
 with kpi3: _kpi_block("Bookados", f"{total_booked}")
 with kpi4: _kpi_block("Vagas livres", f"{total_free}")
-
-
-st.divider()
-# ──────────────────────────────────────────────────────────────────────────────
-# Agregação diária (usada nos gráficos de dia)
-# ──────────────────────────────────────────────────────────────────────────────
-grp_day = df.groupby("Data", as_index=False).agg(
-    Vagas=("Capacidade", "sum"),
-    Bookados=("Bookados", "sum"),
-    Slots=("Horario", "count"),
-)
-
-grp_day["Ocupacao%"] = (
-    grp_day["Bookados"] / grp_day["Vagas"] * 100
-).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
-
-# Dia da semana em português (para hover)
-dias_semana = {
-    0: "Segunda-feira",
-    1: "Terça-feira",
-    2: "Quarta-feira",
-    3: "Quinta-feira",
-    4: "Sexta-feira",
-    5: "Sábado",
-    6: "Domingo",
-}
-grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(dias_semana)
 
 # Criar gráfico com hover personalizado + número em cima da barra
 fig1 = px.bar(
@@ -1534,27 +1480,8 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-if st.button("Testar nível (ABC)"):
-    try:
-        st.write("Headers (sem token):", {
-            "dns": EVO_ABC_DNS,
-            "filial": EVO_ABC_FILIAL,
-            "idw12": EVO_ABC_IDW12,
-            "chaveidfilial_len": len(EVO_ABC_CHAVEIDFILIAL or ""),
-            "chaveidw12_len": len(EVO_ABC_CHAVEIDW12 or ""),
-            "bearer_startswith": (EVO_ABC_BEARER or "")[:10],
-            "bearer_len": len(EVO_ABC_BEARER or ""),
-        })
-
-        data = _abc_get_cliente_nivel(1237792)
-        st.success("✅ Chamou cliente-nivel com sucesso")
-        st.write(data)
-
-    except Exception as e:
-        st.error("❌ Falhou ao chamar cliente-nivel")
-        st.exception(e)
-
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
