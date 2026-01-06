@@ -115,38 +115,82 @@ def _auth_header_basic():
 def _get_json(url_base, path, params=None):
     """
     GET genérico com Basic Auth + backoff.
+    Agora com diagnóstico (status/erro final) para facilitar debug no Streamlit Cloud.
     """
     url = f"{url_base.rstrip('/')}/{path.lstrip('/')}"
-    headers = {"Accept": "application/json", **_auth_header_basic()}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "BornToSkiDashboard/1.0 (+streamlit)",
+        **_auth_header_basic(),
+    }
     params = params or {}
-    backoff = 1.0
 
-    for _ in range(6):
+    backoff = 1.0
+    last_exc = None
+    last_status = None
+    last_text = None
+
+    for attempt in range(1, 7):
         try:
-            r = requests.get(url, headers=headers, params=params, verify=VERIFY_SSL, timeout=60)
+            r = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                verify=VERIFY_SSL,
+                timeout=60,
+            )
+            last_status = r.status_code
+            last_text = (r.text or "")[:800]
+
+            # Sucesso
             if r.status_code in (200, 204):
                 if r.status_code == 204:
                     return []
                 try:
                     data = r.json()
                 except Exception:
+                    # às vezes vem vazio/HTML mesmo com 200 (raro)
                     return []
+
                 if isinstance(data, dict):
                     for k in ("data", "items", "results", "list", "rows"):
                         if k in data and isinstance(data[k], list):
                             return data[k]
                 return data if isinstance(data, list) else []
+
+            # Erros definitivos: não adianta retry
+            if r.status_code in (401, 403):
+                raise RuntimeError(
+                    f"GET {url} -> {r.status_code}\n"
+                    f"Params: {params}\n"
+                    f"Body (até 800 chars): {last_text}"
+                )
+
+            # Erros transitórios: retry com backoff
             if r.status_code in (429, 500, 502, 503, 504):
                 sleep(backoff)
                 backoff = min(backoff * 2, 8)
                 continue
-            raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:400]}")
-        except requests.RequestException:
+
+            # Outros erros: já explode com contexto
+            raise RuntimeError(
+                f"GET {url} -> {r.status_code}\n"
+                f"Params: {params}\n"
+                f"Body (até 800 chars): {last_text}"
+            )
+
+        except requests.RequestException as e:
+            last_exc = e
             sleep(backoff)
             backoff = min(backoff * 2, 8)
 
-    raise RuntimeError(f"Falha ao acessar {url} após múltiplas tentativas.")
-
+    # Se chegou aqui, foi timeout/conexão/etc em todas as tentativas
+    raise RuntimeError(
+        f"Falha ao acessar {url} após múltiplas tentativas.\n"
+        f"Último status: {last_status}\n"
+        f"Último body (até 800 chars): {last_text}\n"
+        f"Última exceção: {repr(last_exc)}"
+    )
 
 @st.cache_data(show_spinner=False, ttl=600)
 def _cached_get_v2(path: str, params_tuple):
