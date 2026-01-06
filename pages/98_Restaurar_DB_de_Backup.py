@@ -107,10 +107,15 @@ st.write(
 if st.button("📤 Gerar backup manual de acidentes no GitHub"):
     with st.spinner("Enviando arquivo de acidentes para o GitHub..."):
         try:
-            backup_acidentes_to_github()
+            res = backup_acidentes_to_github()  # agora retorna dict (PUT json)
         except Exception as e:
             st.error(f"Erro ao fazer backup de acidentes: {e}")
         else:
-            st.success(
-                "Backup do arquivo de acidentes enviado para o GitHub com sucesso!"
-            )
+            st.success("Backup do arquivo de acidentes enviado para o GitHub com sucesso!")
+            sha = (res or {}).get("commit", {}).get("sha")
+            url = (res or {}).get("content", {}).get("html_url")
+            if sha:
+                st.caption(f"Commit: {sha}")
+            if url:
+                st.write(url)
+
