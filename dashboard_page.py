@@ -147,10 +147,8 @@ def _load_levels_dict() -> dict[int, dict]:
                 last_err = e
 
         raise RuntimeError(
-            "Falha ao ler o CSV de níveis. Verifique se a URL é RAW do GitHub e se o arquivo está bem formatado.
-"
-            f"Fonte: {source}
-"
+            "Falha ao ler o CSV de níveis. Verifique se a URL é RAW do GitHub e se o arquivo está bem formatado.\n"
+            f"Fonte: {source}\n"
             f"Erro: {last_err}"
         )
 
@@ -1529,6 +1527,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
