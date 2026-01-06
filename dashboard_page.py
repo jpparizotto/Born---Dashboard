@@ -116,20 +116,56 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
 
 @st.cache_data(show_spinner=False, ttl=6 * 3600)
 def _load_levels_dict() -> dict[int, dict]:
-    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local)."""
+    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local).
+
+    Observações:
+    - O CSV do EVO costuma vir com separador ';' e a coluna 'niveis' pode conter vírgulas (histórico).
+    - Se a URL apontar para a página do GitHub (não-raw), o conteúdo vira HTML e o parser quebra.
+    """
+
+    def _read_levels_csv(source: str) -> pd.DataFrame:
+        # tentativas defensivas (evita o erro "Expected 1 fields ... saw 2" quando sep fica errado)
+        attempts = [
+            dict(sep=";", encoding="utf-8-sig"),
+            dict(sep=";", encoding="utf-8"),
+            dict(sep=";", encoding="latin1"),
+            dict(sep=",", encoding="utf-8-sig"),
+        ]
+        last_err = None
+        for kw in attempts:
+            try:
+                return pd.read_csv(
+                    source,
+                    dtype=str,
+                    keep_default_na=False,
+                    na_filter=False,
+                    engine="python",          # mais tolerante
+                    on_bad_lines="skip",      # não explode por 1 linha ruim
+                    **kw,
+                )
+            except Exception as e:
+                last_err = e
+
+        raise RuntimeError(
+            "Falha ao ler o CSV de níveis. Verifique se a URL é RAW do GitHub e se o arquivo está bem formatado.
+"
+            f"Fonte: {source}
+"
+            f"Erro: {last_err}"
+        )
+
     # 1) URL (recomendado)
     if LEVELS_CSV_URL:
-        df_lv = pd.read_csv(LEVELS_CSV_URL, sep=";", dtype=str)
+        df_lv = _read_levels_csv(LEVELS_CSV_URL)
     else:
         # 2) fallback local (para desenvolvimento)
         if os.path.exists(LEVELS_CSV_LOCAL):
-            df_lv = pd.read_csv(LEVELS_CSV_LOCAL, sep=";", dtype=str)
+            df_lv = _read_levels_csv(LEVELS_CSV_LOCAL)
         else:
             return {}
 
     # normaliza colunas
-    cols = {c: c.strip() for c in df_lv.columns}
-    df_lv = df_lv.rename(columns=cols)
+    df_lv = df_lv.rename(columns={c: str(c).strip() for c in df_lv.columns})
 
     if "idCliente" not in df_lv.columns:
         return {}
@@ -137,7 +173,6 @@ def _load_levels_dict() -> dict[int, dict]:
     # alguns exports podem vir como "niveis" ou "Niveis"
     col_niveis = "niveis" if "niveis" in df_lv.columns else ("Niveis" if "Niveis" in df_lv.columns else None)
     if not col_niveis:
-        # sem coluna de níveis, não dá pra preencher
         return {}
 
     out: dict[int, dict] = {}
@@ -1102,6 +1137,19 @@ with kpi2: _kpi_block("Vagas (capacidade)", f"{total_capacity}")
 with kpi3: _kpi_block("Bookados", f"{total_booked}")
 with kpi4: _kpi_block("Vagas livres", f"{total_free}")
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Agregações usadas nos gráficos (evita NameError: grp_day)
+# ──────────────────────────────────────────────────────────────────────────────
+grp_day = df.groupby("Data", as_index=False).agg(
+    Vagas=("Capacidade", "sum"),
+    Bookados=("Bookados", "sum"),
+)
+grp_day["Ocupacao%"] = (grp_day["Bookados"] / grp_day["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
+
+# Dia da semana (pt-BR)
+_weekdays_pt = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(lambda i: _weekdays_pt[int(i)] if pd.notna(i) else "")
+
 # Criar gráfico com hover personalizado + número em cima da barra
 fig1 = px.bar(
     grp_day.sort_values("Data"),
@@ -1481,6 +1529,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
