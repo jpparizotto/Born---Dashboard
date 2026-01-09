@@ -84,16 +84,22 @@ def _normalize_level_code(code: str) -> str:
     c = (code or "").strip().upper()
     if not c:
         return ""
-    # typos comuns
-    c = c.replace("SKK", "SK")
+    # typos comuns (mantenha SKK! é válido)
     c = c.replace("SBB", "SB")
     # remove caracteres estranhos
     c = re.sub(r"[^0-9A-Z]", "", c)
+
+    # normalização defensiva (opcional, mas ajuda se vier duplicado)
+    if c.endswith("SKKK"):
+        c = c[:-4] + "SKK"  # ex: 2ASKKK -> 2ASKK
+
     return c
 
+
 def _parse_levels_history(niveis_raw: str | None) -> dict:
-    """Retorna {"ski": "<ultimo SK>", "snow": "<ultimo SB>"}."""
+    """Retorna {"ski": "<ultimo SK/SKK/KC>", "snow": "<ultimo SB>"}."""
     out = {"ski": "", "snow": ""}
+
     if niveis_raw is None or (isinstance(niveis_raw, float) and pd.isna(niveis_raw)):
         return out
 
@@ -105,13 +111,15 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
     parts = [p.strip() for p in re.split(r"[,\|;/]+", s) if p.strip()]
     parts = [_normalize_level_code(p) for p in parts if p.strip()]
 
-    for p in reversed(parts):  # pega o mais da direita
-        if not out["ski"] and p.endswith("SK"):
+    # pega o mais da direita
+    for p in reversed(parts):
+        if not out["ski"] and (p.endswith("SK") or p.endswith("SKK") or p.endswith("KC")):
             out["ski"] = p
         if not out["snow"] and p.endswith("SB"):
             out["snow"] = p
         if out["ski"] and out["snow"]:
             break
+
     return out
 
 @st.cache_data(show_spinner=False, ttl=6 * 3600)
@@ -1527,6 +1535,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
