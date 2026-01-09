@@ -275,6 +275,16 @@ with col3:
 st.markdown("---")
 
 # ─────────────────────────────────────────────────────────
+# VENDAS ACUMULADAS — ÚLTIMOS 7 DIAS
+# ─────────────────────────────────────────────────────────
+data_max = daily["Data"].max()
+data_inicio_7d = data_max - pd.Timedelta(days=6)
+
+daily_7d = daily[daily["Data"] >= data_inicio_7d].copy()
+daily_7d["vendas_acumuladas_7d"] = daily_7d["total_vendas"].cumsum()
+daily_7d["vendas_acumuladas_7d_mil"] = daily_7d["vendas_acumuladas_7d"] / 1000
+
+# ─────────────────────────────────────────────────────────
 # GRÁFICOS (com números em cima)
 # ─────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -325,6 +335,33 @@ with tab1:
     # eixo Y começando em 0
     fig_vendas.update_yaxes(rangemode="tozero")
     st.plotly_chart(fig_vendas, use_container_width=True)
+    st.markdown("#### 📈 Vendas acumuladas — últimos 7 dias (R$)")
+    
+    fig_vendas_7d = px.line(
+        daily_7d,
+        x="Data",
+        y="vendas_acumuladas_7d_mil",
+        markers=True,
+        labels={
+            "Data": "Data",
+            "vendas_acumuladas_7d_mil": "Vendas acumuladas (R$000)",
+        },
+    )
+    
+    textos_7d = [
+        f"{v:,.1f}".replace(",", ".")
+        for v in daily_7d["vendas_acumuladas_7d_mil"]
+    ]
+    
+    fig_vendas_7d.update_traces(
+        mode="lines+markers+text",
+        text=textos_7d,
+        textposition="top center"
+    )
+    
+    fig_vendas_7d.update_yaxes(rangemode="tozero")
+    
+    st.plotly_chart(fig_vendas_7d, use_container_width=True)
 
 with tab2:
     st.subheader("🎯 Ticket médio por dia (R$/slot)")
