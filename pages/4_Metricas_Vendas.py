@@ -278,7 +278,7 @@ st.markdown("---")
 # VENDAS ACUMULADAS — ÚLTIMOS 7 DIAS
 # ─────────────────────────────────────────────────────────
 data_max = daily["Data"].max()
-data_inicio_7d = data_max - pd.Timedelta(days=6)
+data_inicio_7d = data_max - pd.Timedelta(days=60)
 
 daily_7d = daily[daily["Data"] >= data_inicio_7d].copy()
 daily_7d["vendas_acumuladas_7d"] = daily_7d["total_vendas"].cumsum()
