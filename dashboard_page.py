@@ -115,7 +115,7 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
     for p in reversed(parts):
         if not out["ski"] and (p.endswith("SK") or p.endswith("SKK") or p.endswith("KC")):
             out["ski"] = p
-        if not out["snow"] and p.endswith("SB"):
+        if not out["snow"] and (p.endswith("SB") or p.endswith("SBK")):
             out["snow"] = p
         if out["ski"] and out["snow"]:
             break
@@ -1535,6 +1535,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
