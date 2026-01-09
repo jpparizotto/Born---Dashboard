@@ -343,7 +343,7 @@ with tab1:
     )
     
     textos_ult7d = [
-        f"{v:,.1f}".replace(",", ".")
+        f"{v:,.0f}".replace(",", ".")
         for v in daily["vendas_ult_7d_mil"]
     ]
     
@@ -352,7 +352,9 @@ with tab1:
         text=textos_ult7d,
         textposition="top center"
     )
-    
+    fig_vendas_ult7d.update_traces(
+        textfont=dict(size=10)  # ajuste fino: 9, 10 ou 11 ficam bons
+    )
     fig_vendas_ult7d.update_yaxes(rangemode="tozero")
     
     st.plotly_chart(fig_vendas_ult7d, use_container_width=True)
