@@ -248,7 +248,14 @@ daily["slots_acumulados"] = daily["total_slots"].cumsum()
 daily["ticket_medio_acumulado"] = (
     daily["vendas_acumuladas"] / daily["slots_acumulados"]
 )
+# ─────────────────────────────────────────────────────────
+# JANELA MÓVEL: VENDAS NOS ÚLTIMOS 7 DIAS (terminando em cada data)
+# ─────────────────────────────────────────────────────────
+daily = daily.sort_values("Data").copy()
 
+# Soma móvel de 7 dias (inclui o dia atual). min_periods=1 para início da série não ficar NaN
+daily["vendas_ult_7d"] = daily["total_vendas"].rolling(window=7, min_periods=1).sum()
+daily["vendas_ult_7d_mil"] = daily["vendas_ult_7d"] / 1000
 # ─────────────────────────────────────────────────────────
 # MÉTRICAS RESUMO (já filtradas)
 # ─────────────────────────────────────────────────────────
@@ -273,16 +280,6 @@ with col3:
     )
 
 st.markdown("---")
-
-# ─────────────────────────────────────────────────────────
-# VENDAS ACUMULADAS — ÚLTIMOS 7 DIAS
-# ─────────────────────────────────────────────────────────
-data_max = daily["Data"].max()
-data_inicio_7d = data_max - pd.Timedelta(days=7)
-
-daily_7d = daily[daily["Data"] >= data_inicio_7d].copy()
-daily_7d["vendas_acumuladas_7d"] = daily_7d["total_vendas"].cumsum()
-daily_7d["vendas_acumuladas_7d_mil"] = daily_7d["vendas_acumuladas_7d"] / 1000
 
 # ─────────────────────────────────────────────────────────
 # GRÁFICOS (com números em cima)
@@ -335,33 +332,30 @@ with tab1:
     # eixo Y começando em 0
     fig_vendas.update_yaxes(rangemode="tozero")
     st.plotly_chart(fig_vendas, use_container_width=True)
-    st.markdown("#### 📈 Vendas acumuladas — últimos 7 dias (R$)")
-    
-    fig_vendas_7d = px.line(
-        daily_7d,
+    st.markdown("#### 🗓️ Vendas nos últimos 7 dias (janela móvel) — R$")
+
+    fig_vendas_ult7d = px.line(
+        daily,
         x="Data",
-        y="vendas_acumuladas_7d_mil",
+        y="vendas_ult_7d_mil",
         markers=True,
-        labels={
-            "Data": "Data",
-            "vendas_acumuladas_7d_mil": "Vendas acumuladas (R$000)",
-        },
+        labels={"Data": "Data", "vendas_ult_7d_mil": "Vendas últimos 7 dias (R$000)"},
     )
     
-    textos_7d = [
+    textos_ult7d = [
         f"{v:,.1f}".replace(",", ".")
-        for v in daily_7d["vendas_acumuladas_7d_mil"]
+        for v in daily["vendas_ult_7d_mil"]
     ]
     
-    fig_vendas_7d.update_traces(
+    fig_vendas_ult7d.update_traces(
         mode="lines+markers+text",
-        text=textos_7d,
+        text=textos_ult7d,
         textposition="top center"
     )
     
-    fig_vendas_7d.update_yaxes(rangemode="tozero")
+    fig_vendas_ult7d.update_yaxes(rangemode="tozero")
     
-    st.plotly_chart(fig_vendas_7d, use_container_width=True)
+    st.plotly_chart(fig_vendas_ult7d, use_container_width=True)
 
 with tab2:
     st.subheader("🎯 Ticket médio por dia (R$/slot)")
