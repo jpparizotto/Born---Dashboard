@@ -374,29 +374,56 @@ def fetch_member_activities_history(
     rows.sort(key=lambda r: (r["Data"], r["Horário"]))
     return rows
 
-def fetch_members_v2_all(take=100):
-    """
-    Pagina /members até acabar. Retorna a LISTA bruta (sem normalização).
-    Usa cache por página.
-    """
+def fetch_members_v2_all(take=100, showMemberships=True, includeAddress=True, includeContacts=True, debug=False):
     take = min(max(1, int(take)), 100)
     skip = 0
     all_rows = []
+
     while True:
         params = {
             "take": take,
             "skip": skip,
-            "showMemberships": "true",
-            "includeAddress": "true",
-            "includeContacts": "true",
+            "showMemberships": "true" if showMemberships else "false",
+            "includeAddress": "true" if includeAddress else "false",
+            "includeContacts": "true" if includeContacts else "false",
         }
-        batch = _cached_get_v2("members", tuple(params.items()))
+
+        try:
+            batch = _cached_get_v2("members", tuple(params.items()))
+        except RuntimeError as e:
+            # 👇 diagnóstico objetivo para você e para o suporte
+            st.error(f"❌ EVO v2/members retornou erro nesta página: take={take} skip={skip}")
+            st.code(f"Params: {params}", language="text")
+            if debug:
+                st.exception(e)
+
+            # 👇 tentativa automática de contorno: reduzir payload
+            if includeContacts or includeAddress or showMemberships:
+                st.warning("Tentando novamente com payload reduzido (sem contacts/address/memberships)…")
+                return fetch_members_v2_all(
+                    take=take,
+                    showMemberships=False,
+                    includeAddress=False,
+                    includeContacts=False,
+                    debug=debug,
+                )
+
+            # se até no payload reduzido deu erro, para geral
+            raise
+
         if not batch:
             break
+
         all_rows.extend(batch)
         skip += take
-    return all_rows
 
+        # se veio menos que take, acabou
+        if isinstance(batch, list) and len(batch) < take:
+            break
+
+        sleep(0.2)
+
+    return all_rows
 
 def _excel_bytes(df, sheet_name="Sheet1"):
     buf = io.BytesIO()
@@ -633,6 +660,12 @@ with st.sidebar:
     bring_all = st.checkbox("Trazer todos (sem limite)", value=True)
     take = st.slider("Tamanho de página (take)", 50, 100, 100, 10, help="Só usado se 'Trazer todos' estiver desmarcado")
     max_pages = st.slider("Máx. páginas", 1, 100, 10, 1, help="Só usado se 'Trazer todos' estiver desmarcado")
+    st.subheader("Payload do /members")
+    opt_memberships = st.checkbox("showMemberships", value=True)
+    opt_address = st.checkbox("includeAddress", value=True)
+    opt_contacts = st.checkbox("includeContacts", value=True)
+
+    debug_pages = st.checkbox("🛠️ Debug de paginação (mostrar onde quebra)", value=False)
 
     if st.button("🔄 Atualizar clientes agora", type="primary"):
         _invalidate_cache()
@@ -641,7 +674,13 @@ with st.sidebar:
 if "_clientes_raw" not in st.session_state:
     with st.spinner("Coletando clientes do EVO (v2/members)…"):
         if bring_all:
-            raw = fetch_members_v2_all(take=100)
+            raw = fetch_members_v2_all(
+                take=100,
+                showMemberships=opt_memberships,
+                includeAddress=opt_address,
+                includeContacts=opt_contacts,
+                debug=debug_pages,
+            )
         else:
             rows = []
             skip = 0
