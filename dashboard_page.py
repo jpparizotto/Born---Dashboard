@@ -455,12 +455,104 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
     if not isinstance(detail, dict):
         return []
 
+    # 0) Se o detail já é uma sessão única, ignore target_start (ele é útil só quando vem "sessions")
+    # Mas mantemos o target_start para compatibilidade com seu fluxo atual.
     if not target_start:
         target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
 
+    # ------------------------------------------------------------
+    # 1) CAMINHO PREFERENCIAL: detail["enrollments"]
+    # ------------------------------------------------------------
+    enrollments = detail.get("enrollments")
+    if isinstance(enrollments, list) and enrollments:
+        packed = []
+
+        # Normalizadores
+        def _to_bool(v):
+            if isinstance(v, bool):
+                return v
+            if v is None:
+                return False
+            s = str(v).strip().lower()
+            return s in ("1", "true", "t", "yes", "y", "sim")
+
+        def _id_cliente(e):
+            # no enrollment o campo principal é idMember
+            for k in ["idMember", "idClient", "idCliente", "idCustomer", "memberId", "clientId", "customerId"]:
+                if isinstance(e, dict) and e.get(k) not in (None, "", []):
+                    try:
+                        return int(e.get(k))
+                    except Exception:
+                        pass
+            return None
+
+        def _name(e):
+            for k in ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]:
+                if isinstance(e, dict) and e.get(k):
+                    return str(e.get(k)).strip()
+            return None
+
+        # Filtra "ativos" e resolve duplicidades por slotNumber
+        by_slot = {}  # slotNumber -> melhor enrollment
+        for e in enrollments:
+            if not isinstance(e, dict):
+                continue
+
+            nm = _name(e)
+            if not nm:
+                continue
+
+            removed = _to_bool(e.get("removed"))
+            suspended = _to_bool(e.get("suspended"))
+            justified_abs = _to_bool(e.get("justifiedAbsence"))
+            replacement = _to_bool(e.get("replacement"))
+            slot_num = e.get("slotNumber")
+
+            # ✅ regra principal: ignorar quem não está mais "válido" para a aula
+            # (removed/suspended/absence costumam ficar no histórico quando há troca)
+            if removed or suspended or justified_abs:
+                continue
+
+            rec = {
+                "name": nm,
+                "idCliente": _id_cliente(e),
+                "_slotNumber": slot_num,
+                "_replacement": replacement,
+                "_status": e.get("status"),
+            }
+
+            # Se não tem slotNumber, só empilha (vai entrar depois)
+            if slot_num in (None, "", []):
+                packed.append(rec)
+                continue
+
+            # Se tem 2 no mesmo slot, prioriza replacement=True (substituto) e depois mantém o primeiro
+            prev = by_slot.get(slot_num)
+            if prev is None:
+                by_slot[slot_num] = rec
+            else:
+                # troca se o novo for replacement e o anterior não
+                if (rec["_replacement"] and not prev.get("_replacement")):
+                    by_slot[slot_num] = rec
+
+        # junta: primeiro os com slot definido (ordenado), depois os sem slot (na ordem)
+        slotted = sorted(by_slot.values(), key=lambda r: (r.get("_slotNumber") is None, r.get("_slotNumber") or 9999))
+        out = slotted + packed
+
+        # remove campos internos
+        for r in out:
+            r.pop("_slotNumber", None)
+            r.pop("_replacement", None)
+            r.pop("_status", None)
+
+        return out
+
+    # ------------------------------------------------------------
+    # 2) FALLBACK (se sua unidade não retornar enrollments)
+    #    mantém seu comportamento anterior, mas sem mudanças
+    # ------------------------------------------------------------
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
     id_keys   = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
-
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
     def _name(o):
@@ -489,7 +581,7 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             return None
         return {"name": n, "idCliente": _id(o)}
 
-    # 1) Preferencial: estrutura por sessões
+    # 2.1) estrutura por sessões (se existir)
     for sess_key in ["sessions", "classes", "scheduleItems"]:
         sess_list = detail.get(sess_key)
         if isinstance(sess_list, list) and sess_list:
@@ -509,7 +601,7 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
                                 packed.append(rec)
                         return packed
 
-    # 2) Direto
+    # 2.2) direto
     packed = []
     for lk in list_keys:
         lst = detail.get(lk)
@@ -529,6 +621,7 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             break
 
     return packed
+
     
 def _extract_professor(item):
     # tenta chaves diretas
@@ -1535,6 +1628,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
