@@ -465,87 +465,70 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
     # ------------------------------------------------------------
     enrollments = detail.get("enrollments")
     if isinstance(enrollments, list) and enrollments:
-        packed = []
-
-        # Normalizadores
+    
         def _to_bool(v):
             if isinstance(v, bool):
                 return v
             if v is None:
                 return False
-            s = str(v).strip().lower()
-            return s in ("1", "true", "t", "yes", "y", "sim")
-
+            return str(v).strip().lower() in ("1","true","t","yes","y","sim")
+    
+        def _safe_int(v):
+            try:
+                return int(v)
+            except Exception:
+                return None
+    
         def _id_cliente(e):
-            # no enrollment o campo principal é idMember
-            for k in ["idMember", "idClient", "idCliente", "idCustomer", "memberId", "clientId", "customerId"]:
-                if isinstance(e, dict) and e.get(k) not in (None, "", []):
-                    try:
-                        return int(e.get(k))
-                    except Exception:
-                        pass
+            for k in ["idMember","idClient","idCliente","idCustomer","memberId","clientId","customerId"]:
+                if isinstance(e, dict) and e.get(k) not in (None,"",[]):
+                    return _safe_int(e.get(k))
             return None
-
+    
         def _name(e):
-            for k in ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]:
+            for k in ["name","fullName","displayName","customerName","personName","clientName","description"]:
                 if isinstance(e, dict) and e.get(k):
                     return str(e.get(k)).strip()
             return None
-
-        # Filtra "ativos" e resolve duplicidades por slotNumber
-        by_slot = {}  # slotNumber -> melhor enrollment
+    
+        by_slot = {}   # slotNumber -> aluno presente
+        extras = []    # sem slotNumber
+    
         for e in enrollments:
             if not isinstance(e, dict):
                 continue
-
+    
             nm = _name(e)
             if not nm:
                 continue
-
-            removed = _to_bool(e.get("removed"))
-            suspended = _to_bool(e.get("suspended"))
-            justified_abs = _to_bool(e.get("justifiedAbsence"))
-            replacement = _to_bool(e.get("replacement"))
-            slot_num = e.get("slotNumber")
-
-            # ✅ regra principal: ignorar quem não está mais "válido" para a aula
-            # (removed/suspended/absence costumam ficar no histórico quando há troca)
-            if removed or suspended or justified_abs:
+    
+            # 🔴 ESTE É O PONTO-CHAVE
+            # status: 0 = presente | 1 = falta | 2 = falta justificada
+            status = _safe_int(e.get("status"))
+            if status is not None and status != 0:
+                continue  # só PRESENTES
+    
+            if _to_bool(e.get("removed")) or _to_bool(e.get("suspended")):
                 continue
-
+    
+            slot_num = _safe_int(e.get("slotNumber"))
             rec = {
                 "name": nm,
                 "idCliente": _id_cliente(e),
-                "_slotNumber": slot_num,
-                "_replacement": replacement,
-                "_status": e.get("status"),
             }
-
-            # Se não tem slotNumber, só empilha (vai entrar depois)
-            if slot_num in (None, "", []):
-                packed.append(rec)
+    
+            if slot_num is None:
+                extras.append(rec)
                 continue
-
-            # Se tem 2 no mesmo slot, prioriza replacement=True (substituto) e depois mantém o primeiro
-            prev = by_slot.get(slot_num)
-            if prev is None:
+    
+            # se tiver dois no mesmo slot, o presente vence (aqui já filtramos)
+            if slot_num not in by_slot:
                 by_slot[slot_num] = rec
-            else:
-                # troca se o novo for replacement e o anterior não
-                if (rec["_replacement"] and not prev.get("_replacement")):
-                    by_slot[slot_num] = rec
-
-        # junta: primeiro os com slot definido (ordenado), depois os sem slot (na ordem)
-        slotted = sorted(by_slot.values(), key=lambda r: (r.get("_slotNumber") is None, r.get("_slotNumber") or 9999))
-        out = slotted + packed
-
-        # remove campos internos
-        for r in out:
-            r.pop("_slotNumber", None)
-            r.pop("_replacement", None)
-            r.pop("_status", None)
-
+    
+        # ordena por slot (1,2,3...) e depois adiciona extras
+        out = [by_slot[k] for k in sorted(by_slot.keys())] + extras
         return out
+
 
     # ------------------------------------------------------------
     # 2) FALLBACK (se sua unidade não retornar enrollments)
@@ -1628,6 +1611,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
