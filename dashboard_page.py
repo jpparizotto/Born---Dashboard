@@ -455,87 +455,12 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
     if not isinstance(detail, dict):
         return []
 
-    # 0) Se o detail já é uma sessão única, ignore target_start (ele é útil só quando vem "sessions")
-    # Mas mantemos o target_start para compatibilidade com seu fluxo atual.
     if not target_start:
         target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
 
-    # ------------------------------------------------------------
-    # 1) CAMINHO PREFERENCIAL: detail["enrollments"]
-    # ------------------------------------------------------------
-    enrollments = detail.get("enrollments")
-    if isinstance(enrollments, list) and enrollments:
-    
-        def _to_bool(v):
-            if isinstance(v, bool):
-                return v
-            if v is None:
-                return False
-            return str(v).strip().lower() in ("1","true","t","yes","y","sim")
-    
-        def _safe_int(v):
-            try:
-                return int(v)
-            except Exception:
-                return None
-    
-        def _id_cliente(e):
-            for k in ["idMember","idClient","idCliente","idCustomer","memberId","clientId","customerId"]:
-                if isinstance(e, dict) and e.get(k) not in (None,"",[]):
-                    return _safe_int(e.get(k))
-            return None
-    
-        def _name(e):
-            for k in ["name","fullName","displayName","customerName","personName","clientName","description"]:
-                if isinstance(e, dict) and e.get(k):
-                    return str(e.get(k)).strip()
-            return None
-    
-        by_slot = {}   # slotNumber -> aluno presente
-        extras = []    # sem slotNumber
-    
-        for e in enrollments:
-            if not isinstance(e, dict):
-                continue
-    
-            nm = _name(e)
-            if not nm:
-                continue
-    
-            # 🔴 ESTE É O PONTO-CHAVE
-            # status: 0 = presente | 1 = falta | 2 = falta justificada
-            status = _safe_int(e.get("status"))
-            if status is not None and status != 0:
-                continue  # só PRESENTES
-    
-            if _to_bool(e.get("removed")) or _to_bool(e.get("suspended")):
-                continue
-    
-            slot_num = _safe_int(e.get("slotNumber"))
-            rec = {
-                "name": nm,
-                "idCliente": _id_cliente(e),
-            }
-    
-            if slot_num is None:
-                extras.append(rec)
-                continue
-    
-            # se tiver dois no mesmo slot, o presente vence (aqui já filtramos)
-            if slot_num not in by_slot:
-                by_slot[slot_num] = rec
-    
-        # ordena por slot (1,2,3...) e depois adiciona extras
-        out = [by_slot[k] for k in sorted(by_slot.keys())] + extras
-        return out
-
-
-    # ------------------------------------------------------------
-    # 2) FALLBACK (se sua unidade não retornar enrollments)
-    #    mantém seu comportamento anterior, mas sem mudanças
-    # ------------------------------------------------------------
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
     id_keys   = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
+
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
     def _name(o):
@@ -564,7 +489,7 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             return None
         return {"name": n, "idCliente": _id(o)}
 
-    # 2.1) estrutura por sessões (se existir)
+    # 1) Preferencial: estrutura por sessões
     for sess_key in ["sessions", "classes", "scheduleItems"]:
         sess_list = detail.get(sess_key)
         if isinstance(sess_list, list) and sess_list:
@@ -584,7 +509,7 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
                                 packed.append(rec)
                         return packed
 
-    # 2.2) direto
+    # 2) Direto
     packed = []
     for lk in list_keys:
         lst = detail.get(lk)
@@ -604,7 +529,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             break
 
     return packed
-
     
 def _extract_professor(item):
     # tenta chaves diretas
@@ -1611,6 +1535,42 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
