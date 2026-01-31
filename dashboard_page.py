@@ -116,7 +116,7 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
             break
 
     return out
-
+DEBUG_SCHEDULE_IDS = {15942757, 15848980}
 @st.cache_data(show_spinner=False, ttl=6 * 3600)
 def _load_levels_dict() -> dict[int, dict]:
     """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local)."""
@@ -405,6 +405,76 @@ def _safe_int(x):
         return None
 
 _DETAIL_CACHE = {}
+DEBUG_SCHEDULE_IDS = {15942757, 15848980}
+
+def _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, filled, expected, detail):
+    if schedule_id not in DEBUG_SCHEDULE_IDS:
+        return
+
+    print("\n" + "="*90)
+    print(f"[DEBUG] ScheduleId={schedule_id} | date={date_val} | start={hour_start} | cap={capacity} | avail={available} | filled={filled} | expected={expected}")
+
+    enrollments = detail.get("enrollments") if isinstance(detail, dict) else None
+    if not isinstance(enrollments, list):
+        print("[DEBUG] detail.enrollments NÃO é lista. Keys do detail:", list(detail.keys())[:40] if isinstance(detail, dict) else type(detail))
+        return
+
+    def b(v):
+        if isinstance(v, bool): return v
+        if v is None: return False
+        return str(v).strip().lower() in ("1","true","t","yes","y","sim")
+
+    def si(v):
+        try: return int(v)
+        except: return None
+
+    rows = []
+    for i, e in enumerate(enrollments):
+        if not isinstance(e, dict):
+            continue
+        # tenta achar nome do jeito mais permissivo possível só pro debug
+        nm = None
+        for k in ["name","fullName","displayName","customerName","personName","clientName","description","memberName","nome"]:
+            if e.get(k):
+                nm = str(e.get(k)).strip()
+                break
+        rows.append({
+            "i": i,
+            "name": nm,
+            "idMember": e.get("idMember") or e.get("memberId") or e.get("idClient") or e.get("clientId"),
+            "slotNumber_raw": e.get("slotNumber"),
+            "slotNumber_int": si(e.get("slotNumber")),
+            "status": si(e.get("status")),
+            "removed": b(e.get("removed")),
+            "suspended": b(e.get("suspended")),
+            "replacement": b(e.get("replacement")),
+            "justifiedAbsence": b(e.get("justifiedAbsence")),
+        })
+
+    # imprime todos
+    print("[DEBUG] ENROLLMENTS (raw):")
+    for r in rows:
+        print("  ", r)
+
+    # diagnósticos focados no Buraco #1
+    slot_ints = [r["slotNumber_int"] for r in rows if r["name"]]
+    print("[DEBUG] slotNumber_int list:", slot_ints)
+
+    # conta duplicados ignorando None
+    from collections import Counter
+    c = Counter([x for x in slot_ints if x is not None])
+    dups = {k:v for k,v in c.items() if v > 1}
+    print("[DEBUG] slotNumber duplicados (k:count):", dups)
+
+    zeros = [r for r in rows if r["slotNumber_int"] == 0]
+    if zeros:
+        print("[DEBUG] ATENÇÃO: slotNumber==0 aparece em:", [z["name"] for z in zeros])
+
+    nones = [r for r in rows if r["slotNumber_int"] is None]
+    if nones:
+        print("[DEBUG] slotNumber==None aparece em:", [n["name"] for n in nones])
+
+    print("="*90)
 
 def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, id_activity_session: int | None = None):
     if not config_id and not id_activity_session:
@@ -522,7 +592,8 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
                 "_replacement": replacement,
             }
 
-            if slot_num is None:
+            # slot_num inválido (muito comum vir 0 para todo mundo) → não usar pra dedupe
+            if slot_num is None or slot_num == 0:
                 extras.append(rec)
                 continue
 
@@ -530,9 +601,12 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             if prev is None:
                 by_slot[slot_num] = rec
             else:
-                # prioriza replacement=True
+                # Se o novo é replacement e o antigo não, troca
                 if rec["_replacement"] and not prev.get("_replacement"):
                     by_slot[slot_num] = rec
+                # Se nenhum é replacement (ou ambos são), não colapsa: joga como extra
+                else:
+                    extras.append(rec)
 
         slotted = [by_slot[k] for k in sorted(by_slot.keys())]
         out = slotted + extras
@@ -683,6 +757,7 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
 
     for h in agenda_items:
+        # ── Atividade/IDs básicos
         act_name_item = _first(h, "name", "activityDescription", "activityName", "description")
         if act_name_item:
             act_key = act_name_item.strip().lower()
@@ -693,11 +768,13 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             act_name_final = "(Sem atividade)"
             act_id_final   = _first(h, "idActivity", "activityId", "id", "Id")
 
+        # ── Data e horários
         date_val   = _first(h, "_requestedDate") or _normalize_date_only(
                         _first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
         hour_end   = _first(h, "endTime",   "hourEnd",   "timeEnd",   "endHour")
 
+        # ── IDs para o /detail
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(
             h,
@@ -705,8 +782,10 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
         )
 
+        # ── Detail (uma vez só)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
 
+        # ── Professor
         prof_name = _extract_professor(h)
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
@@ -721,8 +800,10 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                         break
         prof_name = (prof_name or "(Sem professor)")
 
+        # ── Pista (A/B) via detail
         pista = _extract_pista(detail) or "(Sem pista)"
 
+        # ── schedule_id (para CSV e debug)
         schedule_id = _first(
             h,
             "idAtividadeSessao", "idConfiguration", "idGroupActivity",
@@ -732,20 +813,39 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idClass", "idTime", "id", "Id"
         )
 
+        # ── Capacidade/ocupação
         capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
         filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
         available = _safe_int(_first(h, "available", "vacancies"))
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
 
-        # ✅ aqui passamos slot_date=date_val para aplicar a regra "amanhã+ não filtra status"
-        alunos = _extract_alunos(detail, target_start=(hour_start or None), slot_date=date_val) or []
-
+        # ─────────────────────────────────────────────────────────────
+        # 1) calcula expected ANTES de extrair alunos
         filled_calc = ((capacity or 0) - (available or 0)) if filled is None else filled
         filled_calc = max(0, filled_calc)
         expected    = min(filled_calc, (capacity or 0))
-        alunos      = alunos[:expected]
 
+        # 2) DEBUG: imprime o contexto + enrollments RAW do detail
+        if schedule_id in DEBUG_SCHEDULE_IDS:
+            _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, filled, expected, detail)
+        # ─────────────────────────────────────────────────────────────
+
+        # 3) extrai alunos (slot_date=date_val para aplicar sua regra de "amanhã+")
+        alunos = _extract_alunos(detail, target_start=(hour_start or None), slot_date=date_val) or []
+
+        # 4) DEBUG: imprime alunos antes do corte
+        if schedule_id in DEBUG_SCHEDULE_IDS:
+            print("[DEBUG] alunos_extraidos (antes do corte):", [a.get("name") for a in alunos])
+
+        # 5) aplica corte pelo expected
+        alunos = alunos[:expected]
+
+        # 6) DEBUG: imprime alunos depois do corte
+        if schedule_id in DEBUG_SCHEDULE_IDS:
+            print("[DEBUG] alunos_final (depois do corte expected):", [a.get("name") for a in alunos])
+
+        # ── Monta Aluno 1..3 + Níveis
         aluno_cols = ["vazio", "vazio", "vazio"]
         nivel_ski_cols = ["", "", ""]
         nivel_snow_cols = ["", "", ""]
@@ -768,6 +868,7 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             nivel_ski_cols[2] = ""
             nivel_snow_cols[2] = ""
 
+        # ── Linha
         if date_val:
             rows.append({
                 "Data": date_val,
@@ -793,6 +894,7 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                 "Aluno 3 - Nível Snow": nivel_snow_cols[2],
             })
 
+    # ── Ordena e aplica fallback A/B para pistas “(Sem pista)”
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
     alt_idx_by_date = {}
     for r in rows:
@@ -1483,6 +1585,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
