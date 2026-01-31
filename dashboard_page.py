@@ -37,9 +37,6 @@ VERIFY_SSL = True
 # Defaults de período quando o usuário clicar em Atualizar (se não escolher outro)
 DAYS_AHEAD_DEFAULT = 21
 
-# Senha para liberar o botão (opcional)
-# DASH_PWD = st.secrets.get("DASHBOARD_PASSWORD", os.environ.get("DASHBOARD_PASSWORD", ""))
-
 # ──────────────────────────────────────────────────────────────────────────────
 # NÍVEIS (DICIONÁRIO VIA CSV NO GITHUB)
 # - Enquanto a EVO não libera o endpoint oficial, carregamos um CSV público (raw do GitHub)
@@ -51,7 +48,6 @@ LEVELS_CSV_LOCAL = "data/clientes_niveis.csv"  # fallback local (opcional)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS GERAIS
-
 # ──────────────────────────────────────────────────────────────────────────────
 def _read_csv_safely(path: str) -> pd.DataFrame:
     try:
@@ -95,7 +91,6 @@ def _normalize_level_code(code: str) -> str:
 
     return c
 
-
 def _parse_levels_history(niveis_raw: str | None) -> dict:
     """Retorna {"ski": "<ultimo SK/SKK/KC>", "snow": "<ultimo SB>"}."""
     out = {"ski": "", "snow": ""}
@@ -124,15 +119,8 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
 
 @st.cache_data(show_spinner=False, ttl=6 * 3600)
 def _load_levels_dict() -> dict[int, dict]:
-    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local).
-
-    Observações:
-    - O CSV do EVO costuma vir com separador ';' e a coluna 'niveis' pode conter vírgulas (histórico).
-    - Se a URL apontar para a página do GitHub (não-raw), o conteúdo vira HTML e o parser quebra.
-    """
-
+    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local)."""
     def _read_levels_csv(source: str) -> pd.DataFrame:
-        # tentativas defensivas (evita o erro "Expected 1 fields ... saw 2" quando sep fica errado)
         attempts = [
             dict(sep=";", encoding="utf-8-sig"),
             dict(sep=";", encoding="utf-8"),
@@ -147,8 +135,8 @@ def _load_levels_dict() -> dict[int, dict]:
                     dtype=str,
                     keep_default_na=False,
                     na_filter=False,
-                    engine="python",          # mais tolerante
-                    on_bad_lines="skip",      # não explode por 1 linha ruim
+                    engine="python",
+                    on_bad_lines="skip",
                     **kw,
                 )
             except Exception as e:
@@ -160,23 +148,19 @@ def _load_levels_dict() -> dict[int, dict]:
             f"Erro: {last_err}"
         )
 
-    # 1) URL (recomendado)
     if LEVELS_CSV_URL:
         df_lv = _read_levels_csv(LEVELS_CSV_URL)
     else:
-        # 2) fallback local (para desenvolvimento)
         if os.path.exists(LEVELS_CSV_LOCAL):
             df_lv = _read_levels_csv(LEVELS_CSV_LOCAL)
         else:
             return {}
 
-    # normaliza colunas
     df_lv = df_lv.rename(columns={c: str(c).strip() for c in df_lv.columns})
 
     if "idCliente" not in df_lv.columns:
         return {}
 
-    # alguns exports podem vir como "niveis" ou "Niveis"
     col_niveis = "niveis" if "niveis" in df_lv.columns else ("Niveis" if "Niveis" in df_lv.columns else None)
     if not col_niveis:
         return {}
@@ -282,24 +266,22 @@ def _ensure_base_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Ocupacao%" not in df.columns:
         df["Ocupacao%"] = (df["Bookados"] / df["Capacidade"] * 100)
         df["Ocupacao%"] = df["Ocupacao%"].replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
-    # Garantir coluna Professor mesmo em CSVs antigos
+
     if "Professor" not in df.columns:
         df["Professor"] = None
-    
+
     for col in ["Professor", "Aluno 1", "Aluno 2", "Aluno 3"]:
         if col not in df.columns:
             df[col] = None
-    # Normalizar/garantir coluna Pista
-    rename_map = rename_map if 'rename_map' in locals() else {}
-    # (se quiser mapear variantes)
+
     for cand in (["Pista", "Track", "Lane", "Belt", "Treadmill", "Machine", "Device"]):
         if cand in df.columns:
             df = df.rename(columns={cand: "Pista"})
             break
-    
+
     if "Pista" not in df.columns:
         df["Pista"] = None
-        
+
     return df
 
 def _load_data() -> pd.DataFrame:
@@ -402,7 +384,7 @@ def _fetch_agenda_dia(d_iso, id_branch=None):
     data = _get_json(f"{BASE_URL}/activities/schedule", params=params)
     items = _to_list(data, key="data")
     for it in items:
-        it["_requestedDate"] = d_iso  # carimbo do dia solicitado
+        it["_requestedDate"] = d_iso
     return items
 
 def _fetch_agenda_periodo(date_from, date_to):
@@ -413,7 +395,6 @@ def _fetch_agenda_periodo(date_from, date_to):
             items = _fetch_agenda_dia(d_iso, id_branch=id_branch)
             all_items.extend(items)
         except Exception as e:
-            # log mínimo; sem emojis por compatibilidade
             print(f"Falha ao coletar {d_iso}: {e}")
     return all_items
 
@@ -439,11 +420,6 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
         params["idActivitySession"] = int(id_activity_session)
     try:
         detail = _get_json(f"{BASE_URL}/activities/schedule/detail", params=params) or {}
-        if str(config_id) in ("15601322", "15603289"):  # coloque aqui os IDs das aulas erradas
-            print("\n🔍 DETAIL DEBUG", config_id, activity_date_iso)
-            import json
-            print(json.dumps(detail, indent=2)[:1200])
-        # algumas instalações envelopam em {"data": {...}}
         if isinstance(detail, dict) and "data" in detail and isinstance(detail["data"], dict):
             detail = detail["data"]
         _DETAIL_CACHE[key] = detail
@@ -451,16 +427,125 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
     except Exception:
         return {}
 
-def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]:
+def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: str | date | None = None) -> list[dict]:
+    """
+    Estratégia (opção A):
+    - Para a grade operacional (amanhã/forward), NÃO filtrar por `status` (porque `status` tende a ser presença, não reserva).
+    - Para datas passadas, se quiser, filtrar por `status==0` (presente).
+    - Sempre excluir removed/suspended; e dar preferência ao replacement quando houver duplicidade por slotNumber.
+    """
     if not isinstance(detail, dict):
         return []
+
+    # Normaliza slot_date -> date
+    sd: date | None = None
+    if slot_date:
+        try:
+            if isinstance(slot_date, date):
+                sd = slot_date
+            else:
+                sd = date.fromisoformat(str(slot_date)[:10])
+        except Exception:
+            sd = None
+
+    # Considera "futuro operacional" = amanhã ou depois
+    # (você comentou que gera a grade pro dia seguinte)
+    is_future_op = False
+    if sd is not None:
+        is_future_op = sd >= (date.today() + timedelta(days=1))
 
     if not target_start:
         target_start = str(_first(detail, "startTime", "hourStart", "timeStart", "startHour") or "").strip()
 
+    enrollments = detail.get("enrollments")
+    if isinstance(enrollments, list) and enrollments:
+        def _to_bool(v):
+            if isinstance(v, bool):
+                return v
+            if v is None:
+                return False
+            return str(v).strip().lower() in ("1", "true", "t", "yes", "y", "sim")
+
+        def _safe_int_local(v):
+            try:
+                return int(v)
+            except Exception:
+                return None
+
+        def _id_cliente(e):
+            for k in ["idMember", "idClient", "idCliente", "idCustomer", "memberId", "clientId", "customerId"]:
+                if isinstance(e, dict) and e.get(k) not in (None, "", []):
+                    return _safe_int_local(e.get(k))
+            return None
+
+        def _name(e):
+            for k in ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]:
+                if isinstance(e, dict) and e.get(k):
+                    return str(e.get(k)).strip()
+            return None
+
+        by_slot = {}  # slotNumber -> melhor enrollment
+        extras = []   # sem slotNumber
+
+        for e in enrollments:
+            if not isinstance(e, dict):
+                continue
+
+            nm = _name(e)
+            if not nm:
+                continue
+
+            removed = _to_bool(e.get("removed"))
+            suspended = _to_bool(e.get("suspended"))
+            replacement = _to_bool(e.get("replacement"))
+            justified_abs = _to_bool(e.get("justifiedAbsence"))
+
+            if removed or suspended:
+                continue
+
+            # Para FUTURO (amanhã+): não filtra por status (reserva != presença)
+            # Para PASSADO (ou sem data): pode filtrar por status==0 (presente),
+            # e pode também excluir justifiedAbsence.
+            if not is_future_op:
+                status = _safe_int_local(e.get("status"))  # 0=presente | 1=falta | 2=falta justificada
+                if status is not None and status != 0:
+                    continue
+                if justified_abs:
+                    continue
+            # Para futuro, NÃO exclui justifiedAbsence (às vezes vem inconsistente); a regra forte é removed/suspended.
+
+            slot_num = _safe_int_local(e.get("slotNumber"))
+            rec = {
+                "name": nm,
+                "idCliente": _id_cliente(e),
+                "_slotNumber": slot_num,
+                "_replacement": replacement,
+            }
+
+            if slot_num is None:
+                extras.append(rec)
+                continue
+
+            prev = by_slot.get(slot_num)
+            if prev is None:
+                by_slot[slot_num] = rec
+            else:
+                # prioriza replacement=True
+                if rec["_replacement"] and not prev.get("_replacement"):
+                    by_slot[slot_num] = rec
+
+        slotted = [by_slot[k] for k in sorted(by_slot.keys())]
+        out = slotted + extras
+
+        for r in out:
+            r.pop("_slotNumber", None)
+            r.pop("_replacement", None)
+
+        return out
+
+    # Fallback antigo (caso sua unidade não retorne enrollments)
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
     id_keys   = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
-
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
     def _name(o):
@@ -489,7 +574,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             return None
         return {"name": n, "idCliente": _id(o)}
 
-    # 1) Preferencial: estrutura por sessões
     for sess_key in ["sessions", "classes", "scheduleItems"]:
         sess_list = detail.get(sess_key)
         if isinstance(sess_list, list) and sess_list:
@@ -509,7 +593,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
                                 packed.append(rec)
                         return packed
 
-    # 2) Direto
     packed = []
     for lk in list_keys:
         lst = detail.get(lk)
@@ -529,9 +612,8 @@ def _extract_alunos(detail: dict, target_start: str | None = None) -> list[dict]
             break
 
     return packed
-    
+
 def _extract_professor(item):
-    # tenta chaves diretas
     for k in ["teacher", "teacherName", "instructor", "instructorName",
               "professional", "professionalName", "employee", "employeeName",
               "coach", "coachName"]:
@@ -539,7 +621,6 @@ def _extract_professor(item):
         if v:
             return str(v).strip()
 
-    # tenta listas de profissionais
     for list_key in ["professionals", "teachers", "employees", "instructors"]:
         lst = item.get(list_key)
         if isinstance(lst, list) and lst:
@@ -551,24 +632,17 @@ def _extract_professor(item):
     return None
 
 def _extract_pista(container) -> str | None:
-    """Tenta descobrir a pista (A/B) a partir do detail."""
     if not isinstance(container, dict):
         return None
 
-    # chaves candidatas (conforme costuma vir no detail)
-    keys = [
-        "pista", "track", "trackName", "lane", "belt",
-        "área", "area", "device", "deviceName",
-    ]
+    keys = ["pista", "track", "trackName", "lane", "belt", "área", "area", "device", "deviceName"]
 
-    # leitura direta
     for k in keys:
         v = container.get(k)
         if v not in (None, "", []):
             raw = str(v).strip()
             break
     else:
-        # alguns enviam aninhado tipo detail["location"]["track"]
         loc = container.get("location")
         if isinstance(loc, dict):
             for k in keys:
@@ -582,8 +656,6 @@ def _extract_pista(container) -> str | None:
             return None
 
     s = raw.lower()
-
-    # normalizações comuns
     map_exact = {
         "a": "A", "pista a": "A", "track a": "A", "lane a": "A",
         "b": "B", "pista b": "B", "track b": "B", "lane b": "B",
@@ -593,13 +665,11 @@ def _extract_pista(container) -> str | None:
     if s in map_exact:
         return map_exact[s]
 
-    # tenta extrair a 1ª letra (A/B) se vier tipo "Pista A - 18h"
     if any(ch.isalpha() for ch in s):
         first_alpha = next((ch for ch in s if ch.isalpha()), None)
         if first_alpha in ("a", "b"):
             return first_alpha.upper()
 
-    # tenta extrair número e mapear 1→A, 2→B
     digits = "".join(ch for ch in s if ch.isdigit())
     if digits == "1":
         return "A"
@@ -613,7 +683,6 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
 
     for h in agenda_items:
-        # ── Atividade/IDs básicos
         act_name_item = _first(h, "name", "activityDescription", "activityName", "description")
         if act_name_item:
             act_key = act_name_item.strip().lower()
@@ -624,13 +693,11 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             act_name_final = "(Sem atividade)"
             act_id_final   = _first(h, "idActivity", "activityId", "id", "Id")
 
-        # ── Data e horários (usado no /detail e no CSV)
         date_val   = _first(h, "_requestedDate") or _normalize_date_only(
                         _first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
         hour_end   = _first(h, "endTime",   "hourEnd",   "timeEnd",   "endHour")
 
-        # ── IDs para o /detail (tente ser abrangente)
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(
             h,
@@ -638,10 +705,8 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
         )
 
-        # ── Detail (uma vez só)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
 
-        # ── Professor (item → detail)
         prof_name = _extract_professor(h)
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
@@ -656,10 +721,8 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                         break
         prof_name = (prof_name or "(Sem professor)")
 
-        # ── Pista (A/B) via detail
         pista = _extract_pista(detail) or "(Sem pista)"
 
-        # ── IDs auxiliares para CSV
         schedule_id = _first(
             h,
             "idAtividadeSessao", "idConfiguration", "idGroupActivity",
@@ -669,26 +732,24 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idClass", "idTime", "id", "Id"
         )
 
-        # ── Capacidade/ocupação
         capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
         filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
         available = _safe_int(_first(h, "available", "vacancies"))
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
 
-        alunos = _extract_alunos(detail, target_start=(hour_start or None)) or []
-        
-        # Consistência pelos números
+        # ✅ aqui passamos slot_date=date_val para aplicar a regra "amanhã+ não filtra status"
+        alunos = _extract_alunos(detail, target_start=(hour_start or None), slot_date=date_val) or []
+
         filled_calc = ((capacity or 0) - (available or 0)) if filled is None else filled
         filled_calc = max(0, filled_calc)
         expected    = min(filled_calc, (capacity or 0))
         alunos      = alunos[:expected]
-        
-        # Monta Aluno 1..3 + Níveis
+
         aluno_cols = ["vazio", "vazio", "vazio"]
         nivel_ski_cols = ["", "", ""]
         nivel_snow_cols = ["", "", ""]
-        
+
         for i in range(min(3, len(alunos))):
             aluno_cols[i] = alunos[i].get("name") or "vazio"
             idc = alunos[i].get("idCliente")
@@ -701,18 +762,17 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                     lv = levels_dict.get(idc_i) or {}
                     nivel_ski_cols[i] = lv.get("ski", "") or ""
                     nivel_snow_cols[i] = lv.get("snow", "") or ""
-        
+
         if capacity == 2:
             aluno_cols[2] = "N.A"
             nivel_ski_cols[2] = ""
             nivel_snow_cols[2] = ""
 
-        # ── Linha
         if date_val:
             rows.append({
                 "Data": date_val,
                 "Atividade": act_name_final,
-                "Pista": pista,                 # antes de "Início"
+                "Pista": pista,
                 "Início": hour_start,
                 "Fim":   hour_end,
                 "Horario": hour_start if hour_start else None,
@@ -733,7 +793,6 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                 "Aluno 3 - Nível Snow": nivel_snow_cols[2],
             })
 
-    # ── Ordena e aplica fallback A/B para pistas “(Sem pista)”
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
     alt_idx_by_date = {}
     for r in rows:
@@ -746,19 +805,12 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
     return rows
 
 def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = None) -> str:
-    """
-    Coleta dias no período [date_from, date_to] (formato YYYY-MM-DD ou objetos date).
-    Se None, usa hoje + DAYS_AHEAD_DEFAULT.
-    Salva CSV em evo_ocupacao/ e retorna o caminho.
-    """
     today = date.today()
 
     if not date_from or not date_to:
-        # fallback padrão: hoje + N dias
         d0 = today
         d1 = today + timedelta(days=DAYS_AHEAD_DEFAULT)
     else:
-        # aceita tanto string quanto datetime.date
         if isinstance(date_from, date):
             d0 = date_from
         else:
@@ -783,11 +835,9 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
         raise RuntimeError("Nenhum slot retornado pela API no período solicitado.")
 
     df = pd.DataFrame(rows)
-    # calcula Bookados se faltou; já foi feito no materialize_rows mas reforçamos:
     if "Bookados" not in df.columns or df["Bookados"].isna().all():
         df["Bookados"] = (df["Capacidade"].fillna(0) - df["Disponíveis"].fillna(0)).clip(lower=0).astype(int)
 
-    # salva CSV
     fname = f"slots_{df_iso_from}_a_{df_iso_to}.csv"
     fpath = os.path.join(DATA_DIR, fname)
     df.to_csv(fpath, index=False, encoding="utf-8-sig")
@@ -804,13 +854,12 @@ def _daily_agg(df: pd.DataFrame) -> pd.DataFrame:
     )
     g["Ocupacao%"] = (g["Bookados"] / g["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
     g["VagasSobrando"] = (g["Vagas"] - g["Bookados"]).astype(int)
-    # garantir Data como date
     g["Data"] = pd.to_datetime(g["Data"]).dt.date
     return g
 
 def _month_calendar_frame(daily: pd.DataFrame, year: int, month: int) -> pd.DataFrame:
     n_days = pycal.monthrange(year, month)[1]
-    first_wd = date(year, month, 1).weekday()  # Monday=0
+    first_wd = date(year, month, 1).weekday()
     rows = []
     daily_map = daily.set_index("Data").to_dict(orient="index")
     for d in range(1, n_days + 1):
@@ -844,7 +893,6 @@ def make_calendar_figure(
     max_week = cal["week_index"].max() if not cal.empty else 5
     n_weeks = int(max_week) + 1
 
-    # grade base
     z = [[None for _ in range(7)] for __ in range(n_weeks)]
     custom = [[None for _ in range(7)] for __ in range(n_weeks)]
 
@@ -858,7 +906,6 @@ def make_calendar_figure(
         sobr = int(r["VagasSobrando"])
 
         if color_metric == "VagasSobrando":
-            # limitar a cor: tudo acima de 10 vira 10
             z_val = min(sobr, 10)
         elif color_metric == "Vagas":
             z_val = vagas
@@ -866,7 +913,7 @@ def make_calendar_figure(
             z_val = occ
         else:
             z_val = slots
-        
+
         z[wi][wd] = float(z_val)
 
         custom[wi][wd] = {
@@ -878,14 +925,11 @@ def make_calendar_figure(
             "sobr": sobr,
         }
 
-    # cores
     if color_metric == "Ocupacao%":
         colorscale = "RdYlGn"; zmin, zmax = 0, 100; ctitle = "Ocupação %"
     elif color_metric == "VagasSobrando":
         zmin, zmax = 0, 10
         ctitle = "Vagas sobrando"
-    
-        # Escala azul clara
         colorscale = [
             [0.0,   "#ffffff"],
             [0.3,   "#d6eaff"],
@@ -918,7 +962,6 @@ def make_calendar_figure(
         )
     )
 
-    # Anotações: número de vagas (maior) + data (DD/MM) logo abaixo
     if show_values_in_cell:
         for _, r in cal.iterrows():
             wi = int(r["week_index"])
@@ -926,22 +969,18 @@ def make_calendar_figure(
             sobr = int(r["VagasSobrando"])
             data_val = r["Data"]
 
-            # display: +10 se passar de 10
             sobr_display = "+10" if sobr > 10 else str(sobr)
 
-            # data só como DD/MM
             if isinstance(data_val, (date, datetime)):
                 date_str = data_val.strftime("%d/%m")
             else:
                 date_str = str(data_val)
 
-            # tentar deixar texto claro em células mais escuras
             is_dark = False
             if zmax > 0:
                 is_dark = sobr > zmax * 0.6
             font_color = "white" if is_dark else "black"
 
-            # uma anotação só: número grande + data menor logo abaixo
             fig.add_annotation(
                 x=wd,
                 y=wi,
@@ -949,28 +988,28 @@ def make_calendar_figure(
                 xanchor="center",
                 yanchor="middle",
                 align="center",
-                font=dict(size=18, color=font_color),  # número maior
+                font=dict(size=18, color=font_color),
                 text=(
                     f"{sobr_display}"
-                    f"<br><span style='font-size:12px'>{date_str}</span>"  # data um pouco maior também
+                    f"<br><span style='font-size:12px'>{date_str}</span>"
                 ),
             )
 
     fig.update_xaxes(
         tickmode="array",
         tickvals=list(range(7)),
-        ticktext=[f"<b>{lbl}</b>" for lbl in x_labels],  # negrito
+        ticktext=[f"<b>{lbl}</b>" for lbl in x_labels],
         side="top",
         showgrid=False,
-        tickfont=dict(size=16),  # aumenta a fonte
+        tickfont=dict(size=16),
     )
     fig.update_yaxes(
         tickmode="array",
         tickvals=list(range(n_weeks)),
-        ticktext=[""] * n_weeks,   # sem texto
+        ticktext=[""] * n_weeks,
         autorange="reversed",
         showgrid=False,
-        showticklabels=False,      # remove completamente
+        showticklabels=False,
     )
     fig.update_layout(
         title=f"Calendário — {pycal.month_name[month]} {year}",
@@ -1003,17 +1042,14 @@ with st.sidebar:
 
 if df_slots.empty:
     st.info("Carregue ou gere um CSV de slots para visualizar o dashboard.")
-    # Ainda assim mostramos o bloco de atualização para gerar pela nuvem:
 else:
     pass
 
-# Filtros
 st.sidebar.header("Filtros")
 if not df_slots.empty:
     min_date = df_slots["Data"].dropna().min()
     max_date = df_slots["Data"].dropna().max()
 else:
-    # sem CSV ainda, defina defaults
     min_date = date.today()
     max_date = date.today() + timedelta(days=DAYS_AHEAD_DEFAULT)
 
@@ -1026,25 +1062,24 @@ coleta_mode = st.sidebar.radio(
 dias_custom = None
 if coleta_mode == "Hoje + dias personalizados":
     dias_custom = st.sidebar.number_input(
-        "Quantidade de dias", 
-        min_value=1, max_value=60, 
+        "Quantidade de dias",
+        min_value=1, max_value=60,
         value=DAYS_AHEAD_DEFAULT, step=1
     )
 
 default_from = min_date if isinstance(min_date, date) else date.today()
 default_to = max_date if isinstance(max_date, date) else date.today()
 
-# permite escolher datas além do CSV atual (ex.: até +60 dias)
 picker_max = max(
     default_to,
-    date.today() + timedelta(days=60)  # ajuste se quiser
+    date.today() + timedelta(days=60)
 )
 
 date_range = st.sidebar.date_input(
     "Período",
     value=(default_from, default_to),
-    min_value=default_from,   # pode deixar como está
-    max_value=picker_max      # <<< novo teto do seletor
+    min_value=default_from,
+    max_value=picker_max
 )
 
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
@@ -1062,21 +1097,16 @@ if not df_slots.empty:
 else:
     sel_modalidades = []; sel_periodos = []; sel_horas = []
 
-# ──────────────────────────────────────────────────────────────────────────────
-# BLOCO: ATUALIZAÇÃO ONLINE
-# ──────────────────────────────────────────────────────────────────────────────
 st.divider()
 st.subheader("Atualização dos dados")
 
 col_up_a, col_up_b = st.columns([1, 2])
 with col_up_a:
-    # Agora não tem mais senha extra: quem chegou aqui já passou pelo login
     btn = st.button("🔄 Atualizar agora", type="primary")
 
     if btn:
         try:
             with st.spinner("Coletando dados do EVO e gerando CSV..."):
-                # Determina intervalo de coleta
                 if coleta_mode == "Usar filtros atuais":
                     start = f_date_from
                     end = f_date_to
@@ -1089,11 +1119,7 @@ with col_up_a:
                     start = date.today()
                     end = date.today() + timedelta(days=DAYS_AHEAD_DEFAULT)
 
-                # ⬅️ IMPORTANTE: aqui chamamos a função original que cria o CSV
-                # (copie exatamente o nome da função que estava no código original)
-                path = gerar_csv(start, end)  
-                # exemplo: gerar_csv_slots(), gerar_slots_csv(), gerar_csv_atividade()...
-                # se não lembrar o nome, me mande o trecho original que eu ajusto.
+                path = gerar_csv(start, end)
 
             st.success(f"Atualizado com sucesso!\nArquivo: {os.path.basename(path)}")
             st.rerun()
@@ -1106,13 +1132,9 @@ with col_up_a:
 with col_up_b:
     st.caption("O botão gera um novo CSV no servidor (pasta `evo_ocupacao/`) e recarrega o painel.")
 
-# Se ainda não há dados, paramos aqui
 if df_slots.empty:
     st.stop()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Aplicar filtros aos dados carregados
-# ──────────────────────────────────────────────────────────────────────────────
 df = df_slots.copy()
 mask = (df["Data"] >= pd.to_datetime(f_date_from).date()) & (df["Data"] <= pd.to_datetime(f_date_to).date())
 if sel_modalidades:
@@ -1127,11 +1149,9 @@ if df.empty:
     st.warning("Nenhum dado com os filtros atuais.")
     st.stop()
 
-# KPIs
 total_capacity = int(df["Capacidade"].sum())
 total_booked = int(df["Bookados"].sum())
-total_free = int(df["Disponíveis"].sum())  # vagas livres agregadas
-# fallback defensivo caso "Disponíveis" venha inconsistente:
+total_free = int(df["Disponíveis"].sum())
 if pd.isna(total_free) or total_free < 0:
     total_free = int((df["Capacidade"] - df["Bookados"]).clip(lower=0).sum())
 
@@ -1143,74 +1163,59 @@ with kpi2: _kpi_block("Vagas (capacidade)", f"{total_capacity}")
 with kpi3: _kpi_block("Bookados", f"{total_booked}")
 with kpi4: _kpi_block("Vagas livres", f"{total_free}")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Agregações usadas nos gráficos (evita NameError: grp_day)
-# ──────────────────────────────────────────────────────────────────────────────
 grp_day = df.groupby("Data", as_index=False).agg(
     Vagas=("Capacidade", "sum"),
     Bookados=("Bookados", "sum"),
 )
 grp_day["Ocupacao%"] = (grp_day["Bookados"] / grp_day["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
 
-# Dia da semana (pt-BR)
 _weekdays_pt = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 grp_day["DiaSemana"] = pd.to_datetime(grp_day["Data"]).dt.dayofweek.map(lambda i: _weekdays_pt[int(i)] if pd.notna(i) else "")
 
-# Criar gráfico com hover personalizado + número em cima da barra
 fig1 = px.bar(
     grp_day.sort_values("Data"),
     x="Data",
     y="Ocupacao%",
     title="Ocupação por Dia",
     labels={"Ocupacao%": "Ocupação (%)", "Data": "Data"},
-    text="Ocupacao%",  # ➜ texto = ocupação
+    text="Ocupacao%",
 )
-
 fig1.update_traces(
-    texttemplate="%{text:.1f}%",     # ex: 83.5%
-    textposition="outside",          # número em cima da barra
+    texttemplate="%{text:.1f}%",
+    textposition="outside",
     hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Ocupação: %{y:.1f}%<extra></extra>",
     customdata=np.stack([grp_day["DiaSemana"]], axis=-1),
 )
-
 fig1.update_layout(
     yaxis_title="Ocupação (%)",
     margin=dict(t=60, b=40),
     uniformtext_minsize=8,
     uniformtext_mode="hide",
 )
-
 st.plotly_chart(fig1, use_container_width=True)
 
-# Gráfico — Clientes bookados por dia (absoluto)
 fig1b = px.bar(
     grp_day.sort_values("Data"),
     x="Data",
     y="Bookados",
     title="Clientes bookados por dia",
     labels={"Bookados": "Clientes", "Data": "Data"},
-    text="Bookados",  # ➜ mostra o valor no topo da barra
+    text="Bookados",
 )
-
-# Configura estilo do texto e hover
 fig1b.update_traces(
-    texttemplate="%{text:d}", 
-    textposition="outside",     # coloca acima da barra
+    texttemplate="%{text:d}",
+    textposition="outside",
     hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Clientes: %{y:d}<extra></extra>",
     customdata=np.stack([grp_day["DiaSemana"]], axis=-1)
 )
-
-# Ajusta layout para dar espaço pro texto acima
 fig1b.update_layout(
     uniformtext_minsize=8,
     uniformtext_mode="hide",
     yaxis_title="Clientes (bookados)",
     margin=dict(t=60, b=40),
 )
-
 st.plotly_chart(fig1b, use_container_width=True)
 
-# Gráfico — Vagas sobrando por dia (capacidade - bookados)
 grp_day["VagasSobrando"] = (grp_day["Vagas"] - grp_day["Bookados"]).clip(lower=0).astype(int)
 
 fig1c = px.bar(
@@ -1219,26 +1224,22 @@ fig1c = px.bar(
     y="VagasSobrando",
     title="Vagas sobrando por dia",
     labels={"VagasSobrando": "Vagas sobrando", "Data": "Data"},
-    text="VagasSobrando",  # ➜ mostra o valor no topo da barra
+    text="VagasSobrando",
 )
-
 fig1c.update_traces(
     texttemplate="%{text:d}",
-    textposition="outside",  # coloca acima da barra
+    textposition="outside",
     hovertemplate="<b>%{x|%d/%m/%Y}</b><br>Dia: %{customdata[0]}<br>Vagas sobrando: %{y:d}<extra></extra>",
     customdata=np.stack([grp_day["DiaSemana"]], axis=-1),
 )
-
 fig1c.update_layout(
     uniformtext_minsize=8,
     uniformtext_mode="hide",
     yaxis_title="Vagas sobrando",
     margin=dict(t=60, b=40),
 )
-
 st.plotly_chart(fig1c, use_container_width=True)
 
-# Gráfico — Ocupação por modalidade
 grp_mod = df.groupby("Atividade", as_index=False).agg(
     Vagas=("Capacidade", "sum"),
     Bookados=("Bookados", "sum"),
@@ -1252,23 +1253,18 @@ fig2 = px.bar(
     y="Ocupacao%",
     title="Ocupação por Modalidade",
     labels={"Ocupacao%": "Ocupação (%)", "Atividade": "Modalidade"},
-    text="Ocupacao%",  # ➜ número em cima da barra
+    text="Ocupacao%",
 )
-
 fig2.update_traces(
     texttemplate="%{text:.1f}%",
     textposition="outside",
 )
-
 fig2.update_layout(
     yaxis_title="Ocupação (%)",
     margin=dict(t=60, b=80),
 )
-
 st.plotly_chart(fig2, width="stretch")
 
-
-# Gráfico — Ocupação por período
 grp_per = df.groupby("Periodo", as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"), Slots=("Horario", "count"))
 grp_per["Ocupacao%"] = (grp_per["Bookados"] / grp_per["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
 order_map = {"Manhã": 0, "Tarde": 1, "Noite": 2, "Indefinido": 3}
@@ -1276,9 +1272,7 @@ grp_per = grp_per.sort_values(by="Periodo", key=lambda s: s.map(order_map))
 fig3 = px.bar(grp_per, x="Periodo", y="Ocupacao%", title="Ocupação por Período", labels={"Ocupacao%": "Ocupação (%)", "Periodo": "Período"})
 st.plotly_chart(fig3, width="stretch")
 
-# Gráfico — Aulas por professor (contagem de slots/aulas)
 df_prof = df.copy()
-
 if "Professor" not in df_prof.columns or df_prof["Professor"].isna().all():
     st.info("Ainda não há dados de professor neste arquivo/período. Gere um CSV novo em “🔄 Atualizar agora”.")
 else:
@@ -1303,7 +1297,6 @@ else:
     fig_prof.update_layout(xaxis_tickangle=-25, margin=dict(t=60, b=80))
     st.plotly_chart(fig_prof, use_container_width=True)
 
-# Heatmap — Data × Horário
 grp_hh = df.groupby(["Data", "Horario"], as_index=False).agg(Vagas=("Capacidade", "sum"), Bookados=("Bookados", "sum"))
 grp_hh["Ocupacao%"] = (grp_hh["Bookados"] / grp_hh["Vagas"] * 100).replace([np.inf, -np.inf], np.nan).fillna(0).round(1)
 grp_hh = grp_hh.sort_values(by="Horario", key=lambda s: s.map(_hhmm_to_minutes))
@@ -1313,20 +1306,15 @@ st.plotly_chart(fig4, width="stretch")
 
 st.divider()
 
-# Calendário
 st.subheader("Calendário (mensal)")
 daily = _daily_agg(df)
 if daily.empty:
     st.info("Sem dados para montar o calendário no período selecionado.")
 else:
-    # Sempre olhar 30 dias pra frente, a partir de hoje
     hoje = date.today()
     limite = hoje + timedelta(days=30)
 
     daily_fut = daily[(daily["Data"] >= hoje) & (daily["Data"] <= limite)].copy()
-
-    # fallback: se não houver dados nesse intervalo (ex.: só histórico),
-    # usa o comportamento antigo com todo o "daily"
     if daily_fut.empty:
         daily_fut = daily.copy()
 
@@ -1340,7 +1328,7 @@ else:
         cur = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
 
     month_labels = [f"{pycal.month_name[m.month]} {m.year}" for m in months_list]
-    idx_default = 0  # começa no primeiro mês do intervalo futuro
+    idx_default = 0
     sel = st.selectbox(
         "Selecione o mês",
         options=list(range(len(months_list))),
@@ -1364,44 +1352,21 @@ else:
     )
     st.plotly_chart(fig_cal, width="stretch")
 
-
-
 st.divider()
-# ──────────────────────────────────────────────────────────────────────────────
-# Breakdown de modalidades: dias de semana x finais de semana
-# ──────────────────────────────────────────────────────────────────────────────
+
 df_break = df.copy()
-
-# Garantir que Data esteja como datetime
 df_break["DataDT"] = pd.to_datetime(df_break["Data"])
+df_break["TipoDia"] = df_break["DataDT"].dt.dayofweek.apply(lambda x: "Semana" if x < 5 else "Fim de semana")
 
-# 0=Seg ... 6=Dom -> <5 semana, >=5 fim de semana
-df_break["TipoDia"] = df_break["DataDT"].dt.dayofweek.apply(
-    lambda x: "Semana" if x < 5 else "Fim de semana"
-)
-
-# Contagem de slots por modalidade e tipo de dia
-grp_break = df_break.groupby(["TipoDia", "Atividade"], as_index=False).agg(
-    Slots=("Horario", "count")
-)
-
-# Total de slots por tipo de dia
+grp_break = df_break.groupby(["TipoDia", "Atividade"], as_index=False).agg(Slots=("Horario", "count"))
 grp_break["TotalSlotsTipoDia"] = grp_break.groupby("TipoDia")["Slots"].transform("sum")
+grp_break["PctSlots"] = (grp_break["Slots"] / grp_break["TotalSlotsTipoDia"] * 100).round(1)
 
-# Percentual dentro do tipo de dia
-grp_break["PctSlots"] = (
-    grp_break["Slots"] / grp_break["TotalSlotsTipoDia"] * 100
-).round(1)
-
-# Tabela & Downloads
 st.subheader("Dados filtrados (detalhado)")
 st.dataframe(df.sort_values(["Data", "Horario", "Atividade"]).reset_index(drop=True), use_container_width=True, height=420)
 
-import io
-
 col_a, col_b, col_c, col_d = st.columns(4)
 
-# 1) CSV com dados filtrados (como já era)
 with col_a:
     _download_button_csv(
         df.sort_values(["Data", "Horario", "Atividade"]),
@@ -1409,7 +1374,6 @@ with col_a:
         "dados_filtrados.csv",
     )
 
-# 2) CSV ocupação por dia (como já era)
 with col_b:
     _download_button_csv(
         grp_day.sort_values("Data"),
@@ -1417,7 +1381,6 @@ with col_b:
         "ocupacao_por_dia.csv",
     )
 
-# 3) Excel da grade (como já era)
 with col_c:
     selected_cols = [
         "Pista", "Data", "Início", "Fim", "Atividade",
@@ -1428,11 +1391,8 @@ with col_c:
         "Aluno 3", "Aluno 3 - Nível Ski", "Aluno 3 - Nível Snow",
     ]
 
-    # 1) Ordena primeiro no df original (usando só chaves que existirem)
     sort_keys = [c for c in ["Data", "Horario", "Atividade"] if c in df.columns]
     df_sorted = df.sort_values(sort_keys) if sort_keys else df.copy()
-
-    # 2) Depois seleciona as colunas desejadas (apenas as que existirem)
     cols_existentes = [c for c in selected_cols if c in df_sorted.columns]
     df_excel = df_sorted[cols_existentes]
 
@@ -1440,8 +1400,6 @@ with col_c:
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df_excel.to_excel(writer, index=False, sheet_name="Aulas")
         worksheet = writer.sheets["Aulas"]
-
-        # Ajuste de largura automática
         for i, col in enumerate(df_excel.columns):
             max_len = max(df_excel[col].astype(str).map(len).max(), len(col)) + 2
             worksheet.set_column(i, i, min(max_len, 40))
@@ -1453,11 +1411,9 @@ with col_c:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-# 4) NOVO: Excel com breakdown modalidades semana x fim de semana
 with col_d:
     buffer_break = io.BytesIO()
     with pd.ExcelWriter(buffer_break, engine="xlsxwriter") as writer:
-        # Dias de semana
         df_semana = grp_break[grp_break["TipoDia"] == "Semana"].copy()
         if not df_semana.empty:
             df_semana = df_semana[["Atividade", "Slots", "TotalSlotsTipoDia", "PctSlots"]]
@@ -1476,7 +1432,6 @@ with col_d:
                 max_len = max(df_semana[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(i, i, min(max_len, 40))
 
-        # Finais de semana
         df_fim = grp_break[grp_break["TipoDia"] == "Fim de semana"].copy()
         if not df_fim.empty:
             df_fim = df_fim[["Atividade", "Slots", "TotalSlotsTipoDia", "PctSlots"]]
@@ -1504,29 +1459,22 @@ with col_d:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-
-import io
-
 st.divider()
 st.subheader("📋 Escala de Professores")
 
-# Seleciona e ordena colunas relevantes
 cols_prof = ["Data", "Início", "Fim", "Pista", "Atividade", "Professor"]
 cols_existentes = [c for c in cols_prof if c in df.columns]
 df_prof_escala = df[cols_existentes].sort_values(["Data", "Início", "Atividade"])
 
-# Gera o arquivo Excel em memória
 buffer_prof = io.BytesIO()
 with pd.ExcelWriter(buffer_prof, engine="xlsxwriter") as writer:
     df_prof_escala.to_excel(writer, index=False, sheet_name="Escala")
     worksheet = writer.sheets["Escala"]
-    # Ajusta largura de colunas automaticamente
     for i, col in enumerate(df_prof_escala.columns):
         max_len = max(df_prof_escala[col].astype(str).map(len).max(), len(col)) + 2
         worksheet.set_column(i, i, min(max_len, 40))
 buffer_prof.seek(0)
 
-# Botão de download
 st.download_button(
     label="⬇️ Baixar Escala de Professores",
     data=buffer_prof.getvalue(),
@@ -1535,6 +1483,8 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
+
 
 
 
