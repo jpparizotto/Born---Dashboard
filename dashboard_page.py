@@ -555,7 +555,15 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             return None
 
         by_slot = {}  # slotNumber -> melhor enrollment
-        extras = []   # sem slotNumber
+        extras = []   # sem slotNumber (ou slotNumber inválido)
+
+        def _score(r):
+            # maior é melhor
+            return (
+                1 if r.get("_replacement") else 0,   # substituto ganha
+                1 if r.get("_status") == 0 else 0,   # presente ganha (se existir)
+                0 if r.get("_justAbs") else 1,       # NÃO justificada ganha (1), justificada perde (0)
+            )
 
         for e in enrollments:
             if not isinstance(e, dict):
@@ -569,30 +577,30 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             suspended = _to_bool(e.get("suspended"))
             replacement = _to_bool(e.get("replacement"))
             justified_abs = _to_bool(e.get("justifiedAbsence"))
+            status = _safe_int_local(e.get("status"))  # pode ser None
 
             if removed or suspended:
                 continue
 
-            # Para FUTURO (amanhã+): não filtra por status (reserva != presença)
-            # Para PASSADO (ou sem data): pode filtrar por status==0 (presente),
-            # e pode também excluir justifiedAbsence.
+            # PASSADO: filtra presença
             if not is_future_op:
-                status = _safe_int_local(e.get("status"))  # 0=presente | 1=falta | 2=falta justificada
                 if status is not None and status != 0:
                     continue
                 if justified_abs:
                     continue
-            # Para futuro, NÃO exclui justifiedAbsence (às vezes vem inconsistente); a regra forte é removed/suspended.
 
             slot_num = _safe_int_local(e.get("slotNumber"))
+
             rec = {
                 "name": nm,
                 "idCliente": _id_cliente(e),
                 "_slotNumber": slot_num,
                 "_replacement": replacement,
+                "_status": status,
+                "_justAbs": justified_abs,
             }
 
-            # slot_num inválido (muito comum vir 0 para todo mundo) → não usar pra dedupe
+            # slot_num inválido (muito comum vir 0) → não dedupa, manda pra extras
             if slot_num is None or slot_num == 0:
                 extras.append(rec)
                 continue
@@ -601,21 +609,36 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             if prev is None:
                 by_slot[slot_num] = rec
             else:
-                # Se o novo é replacement e o antigo não, troca
-                if rec["_replacement"] and not prev.get("_replacement"):
+                # escolhe o melhor; não perde o outro
+                if _score(rec) > _score(prev):
                     by_slot[slot_num] = rec
-                # Se nenhum é replacement (ou ambos são), não colapsa: joga como extra
+                    extras.append(prev)
                 else:
                     extras.append(rec)
 
         slotted = [by_slot[k] for k in sorted(by_slot.keys())]
         out = slotted + extras
 
+        # Ordena ANTES de limpar os campos internos
+        out.sort(
+            key=lambda r: (
+                -(1 if r.get("_replacement") else 0),
+                -(1 if r.get("_status") == 0 else 0),
+                (1 if r.get("_justAbs") else 0),  # justAbs=True vai pro fim
+                (r.get("_slotNumber") is None, r.get("_slotNumber") or 9999),
+                r.get("name") or "",
+            )
+        )
+
+        # limpa campos internos depois do sort
         for r in out:
             r.pop("_slotNumber", None)
             r.pop("_replacement", None)
+            r.pop("_status", None)
+            r.pop("_justAbs", None)
 
         return out
+
 
     # Fallback antigo (caso sua unidade não retorne enrollments)
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
@@ -1585,6 +1608,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
