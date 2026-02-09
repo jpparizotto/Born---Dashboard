@@ -276,10 +276,10 @@ def _route_levels_to_ski_snow(member_profile: dict) -> dict:
         if not lvl:
             continue
 
-        # ✅ seus códigos reais terminam com SK / SB
-        if lvl.endswith("SB"):
+        # ✅ regra simples: contém SB -> snow; contém SK -> ski (SKK entra aqui)
+        if "SB" in lvl:
             out["snow"] = lvl
-        elif lvl.endswith("SK") or lvl.startswith("KC") or lvl.endswith("KC"):
+        if "SK" in lvl:
             out["ski"] = lvl
 
     return out
@@ -1777,6 +1777,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
