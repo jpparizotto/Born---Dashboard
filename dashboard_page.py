@@ -295,7 +295,7 @@ def _api_fetch_levels_for_ids(
     member_ids: tuple[int, ...],
     per_minute_limit: int = 40,
     max_retries_429: int = 6,
-    max_total_seconds: int = 180,  # tempo máximo que você aceita ficar esperando nessa rodada
+    max_total_seconds: int = 600,  # tempo máximo que você aceita ficar esperando nessa rodada
 ) -> tuple[dict[int, dict], dict[int, str]]:
     """
     Tenta buscar níveis via API v2 para TODOS os IDs (API-first).
@@ -1187,7 +1187,7 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
         member_ids_t,
         per_minute_limit=40,
         max_retries_429=6,
-        max_total_seconds=240,  # aumente se quiser insistir mais
+        max_total_seconds=600,  # aumente se quiser insistir mais
     )
     
     # 2) merge: API manda, CSV só cobre buracos
@@ -1876,6 +1876,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
