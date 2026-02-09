@@ -283,6 +283,98 @@ def _route_levels_to_ski_snow(member_profile: dict) -> dict:
             out["ski"] = lvl
 
     return out
+    
+import time
+import random
+
+def _is_rate_limit_error(err: Exception) -> bool:
+    s = str(err)
+    return (" -> 429" in s) or ("request limit" in s.lower()) or ("too many requests" in s.lower())
+
+def _api_fetch_levels_for_ids(
+    member_ids: tuple[int, ...],
+    per_minute_limit: int = 40,
+    max_retries_429: int = 6,
+    max_total_seconds: int = 180,  # tempo máximo que você aceita ficar esperando nessa rodada
+) -> tuple[dict[int, dict], dict[int, str]]:
+    """
+    Tenta buscar níveis via API v2 para TODOS os IDs (API-first).
+    Faz throttle ~40/min e retry com backoff quando dá 429.
+    Retorna: (levels_dict_api, errors)
+    """
+    start_ts = time.time()
+
+    # intervalo base por request pra respeitar 40/min (~1.5s)
+    base_sleep = max(60.0 / float(per_minute_limit), 1.0)
+
+    levels_api: dict[int, dict] = {}
+    errors: dict[int, str] = {}
+
+    for idx, mid in enumerate(member_ids):
+        # corta por tempo total (pra não travar o app pra sempre)
+        if (time.time() - start_ts) > max_total_seconds:
+            errors[mid] = "timeout_total_seconds"
+            continue
+
+        # throttle entre requests
+        if idx > 0:
+            # jitter pequeno ajuda a não “bater” no minuto certinho
+            time.sleep(base_sleep + random.uniform(0.05, 0.25))
+
+        # tenta com retry específico para 429
+        attempt = 0
+        while True:
+            try:
+                prof = _get_member_profile_v2(int(mid))  # pode estar cacheado por st.cache_data
+                lv = _route_levels_to_ski_snow(prof)
+
+                # se API veio “sem level”, ainda conta como resposta válida
+                levels_api[int(mid)] = {"ski": lv.get("ski", "") or "", "snow": lv.get("snow", "") or ""}
+                break
+
+            except Exception as e:
+                if _is_rate_limit_error(e) and attempt < max_retries_429:
+                    # backoff exponencial + jitter
+                    wait = min(60, (2 ** attempt) * 3) + random.uniform(0.2, 0.8)
+                    time.sleep(wait)
+                    attempt += 1
+                    continue
+
+                errors[int(mid)] = str(e)
+                levels_api[int(mid)] = {"ski": "", "snow": ""}
+                break
+
+    return levels_api, errors
+
+def _merge_levels_api_with_csv(
+    levels_api: dict[int, dict],
+    member_ids: tuple[int, ...],
+    levels_csv: dict[int, dict] | None = None,
+) -> dict[int, dict]:
+    """
+    Regra: API manda. CSV só preenche se API falhou ou veio vazio.
+    """
+    if levels_csv is None:
+        levels_csv = _load_levels_dict_from_csv()
+
+    out: dict[int, dict] = {}
+
+    for mid in member_ids:
+        a = levels_api.get(mid) or {"ski": "", "snow": ""}
+        c = levels_csv.get(mid) or {"ski": "", "snow": ""}
+
+        ski = (a.get("ski") or "").strip()
+        snow = (a.get("snow") or "").strip()
+
+        # se API não trouxe, tenta CSV
+        if not ski:
+            ski = (c.get("ski") or "").strip()
+        if not snow:
+            snow = (c.get("snow") or "").strip()
+
+        out[mid] = {"ski": ski, "snow": snow}
+
+    return out
 
 def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, dict], dict[int, str]]:
     out: dict[int, dict] = {}
@@ -1090,10 +1182,17 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
     
     _debug_set("member_ids_t", member_ids_t)
     
-    levels_api, level_errors = _load_levels_dict_from_api(member_ids_t, max_fetch_per_run=35)
-    levels_csv = _load_levels_dict_from_csv()
-    levels_dict = _merge_levels(levels_api, levels_csv)
+    # 1) tenta buscar tudo via API (pode demorar, mas fica “API-first”)
+    levels_api, level_errors = _api_fetch_levels_for_ids(
+        member_ids_t,
+        per_minute_limit=40,
+        max_retries_429=6,
+        max_total_seconds=240,  # aumente se quiser insistir mais
+    )
     
+    # 2) merge: API manda, CSV só cobre buracos
+    levels_dict = _merge_levels_api_with_csv(levels_api, member_ids_t)
+
     _debug_set("level_errors", level_errors)
     _debug_set("levels_sample", {mid: levels_dict.get(mid) for mid in list(member_ids_t)[:10]})
     
@@ -1777,6 +1876,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
