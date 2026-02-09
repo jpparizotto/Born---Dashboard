@@ -265,20 +265,19 @@ def _route_levels_to_ski_snow(member_profile: dict) -> dict:
 
     return out
 
-@st.cache_data(show_spinner=False, ttl=12 * 3600)
-def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> dict[int, dict]:
-    """
-    Carrega {idMember: {"ski": "...", "snow": "..."} } chamando v2 /members/{idMember}.
-    Cache 12h.
-    """
+def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, dict], dict[int, str]]:
     out: dict[int, dict] = {}
+    errors: dict[int, str] = {}
+
     for mid in member_ids:
         try:
-            prof = _get_member_profile_v2(int(mid))
+            prof = _get_member_profile_v2(int(mid))  # este sim fica cacheado por idMember
             out[int(mid)] = _route_levels_to_ski_snow(prof)
-        except Exception:
+        except Exception as e:
             out[int(mid)] = {"ski": "", "snow": ""}
-    return out
+            errors[int(mid)] = str(e)
+
+    return out, errors
 
 @st.cache_data(show_spinner=False, ttl=12 * 3600)
 def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, dict], dict[int, str]]:
@@ -1730,6 +1729,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
