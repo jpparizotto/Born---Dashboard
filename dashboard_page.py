@@ -35,7 +35,9 @@ def _debug_get(key: str, default=None):
 
 def _debug_clear():
     st.session_state["_debug"] = {}
-    
+
+LEVELS_CACHE_PATH = "data/member_levels_cache.csv"
+os.makedirs("data", exist_ok=True)
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG GERAL
 # ──────────────────────────────────────────────────────────────────────────────
@@ -86,6 +88,26 @@ def _find_latest_slots_csv():
     pattern = os.path.join(DATA_DIR, "slots_*.csv")
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
     return files[0] if files else None
+
+def _read_levels_cache() -> dict[int, dict]:
+    if not os.path.exists(LEVELS_CACHE_PATH):
+        return {}
+    try:
+        dfc = pd.read_csv(LEVELS_CACHE_PATH, dtype={"idMember": "int64", "ski": "string", "snow": "string"})
+        out = {}
+        for _, r in dfc.iterrows():
+            mid = int(r["idMember"])
+            out[mid] = {"ski": (r.get("ski") or "") or "", "snow": (r.get("snow") or "") or ""}
+        return out
+    except Exception:
+        return {}
+
+def _write_levels_cache(cache: dict[int, dict]):
+    rows = []
+    for mid, lv in cache.items():
+        rows.append({"idMember": int(mid), "ski": lv.get("ski", "") or "", "snow": lv.get("snow", "") or ""})
+    dfc = pd.DataFrame(rows).drop_duplicates(subset=["idMember"], keep="last")
+    dfc.to_csv(LEVELS_CACHE_PATH, index=False, encoding="utf-8-sig")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # AUTH + HTTP
@@ -153,7 +175,6 @@ def _normalize_level_code(code: str) -> str:
     return c
 
 def _parse_levels_history(niveis_raw: str | None) -> dict:
-    """Fallback CSV: histórico separado por vírgula/;|/ etc -> último SK* e último SB*."""
     out = {"ski": "", "snow": ""}
 
     if niveis_raw is None or (isinstance(niveis_raw, float) and pd.isna(niveis_raw)):
@@ -167,9 +188,9 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
     parts = [_normalize_level_code(p) for p in parts if p.strip()]
 
     for p in reversed(parts):
-        if not out["ski"] and (p.startswith("SK") or p.startswith("KC")):
+        if not out["ski"] and (p.endswith("SK") or p.endswith("KC") or p.startswith("KC")):
             out["ski"] = p
-        if not out["snow"] and p.startswith("SB"):
+        if not out["snow"] and p.endswith("SB"):
             out["snow"] = p
         if out["ski"] and out["snow"]:
             break
@@ -241,10 +262,6 @@ def _get_member_profile_v2(id_member: int) -> dict:
     return data if isinstance(data, dict) else {}
 
 def _route_levels_to_ski_snow(member_profile: dict) -> dict:
-    """
-    Usa currentLevelName exatamente como vem (ex: SK1A, SB3B).
-    Só roteia Ski vs Snow com prefixo.
-    """
     out = {"ski": "", "snow": ""}
 
     ml = member_profile.get("memberLevel")
@@ -254,13 +271,15 @@ def _route_levels_to_ski_snow(member_profile: dict) -> dict:
     for it in ml:
         if not isinstance(it, dict):
             continue
+
         lvl = str(it.get("currentLevelName") or "").strip().upper()
         if not lvl:
             continue
 
-        if lvl.startswith("SB"):
+        # ✅ seus códigos reais terminam com SK / SB
+        if lvl.endswith("SB"):
             out["snow"] = lvl
-        elif lvl.startswith("SK") or lvl.startswith("KC"):
+        elif lvl.endswith("SK") or lvl.startswith("KC") or lvl.endswith("KC"):
             out["ski"] = lvl
 
     return out
@@ -279,25 +298,42 @@ def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, d
 
     return out, errors
 
-@st.cache_data(show_spinner=False, ttl=12 * 3600)
-def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, dict], dict[int, str]]:
+def _load_levels_dict_from_api(
+    member_ids: tuple[int, ...],
+    max_fetch_per_run: int = 35,
+) -> tuple[dict[int, dict], dict[int, str]]:
     """
-    Retorna:
-      - levels_dict: {idMember: {"ski": "...", "snow": "..."}}
-      - errors: {idMember: "erro/status"} quando falhar
+    Carrega níveis via v2, mas:
+    - usa cache persistente em disco (data/member_levels_cache.csv)
+    - busca no máximo `max_fetch_per_run` IDs por execução (evita 429 de 40/min)
+    Retorna (levels_dict, errors).
     """
-    out: dict[int, dict] = {}
+    cache = _read_levels_cache()
     errors: dict[int, str] = {}
 
-    for mid in member_ids:
-        try:
-            prof = _get_member_profile_v2(int(mid))
-            out[int(mid)] = _route_levels_to_ski_snow(prof)
-        except Exception as e:
-            out[int(mid)] = {"ski": "", "snow": ""}
-            errors[int(mid)] = str(e)
+    # ids que ainda não estão no cache local
+    missing = [int(mid) for mid in member_ids if int(mid) not in cache]
 
-    return out, errors
+    # busca só um lote por rodada (pra não estourar 40/min)
+    to_fetch = missing[:max_fetch_per_run]
+
+    for mid in to_fetch:
+        try:
+            prof = _get_member_profile_v2(mid)  # este sim pode ficar cacheado 12h por id
+            cache[mid] = _route_levels_to_ski_snow(prof)
+        except Exception as e:
+            errors[mid] = str(e)
+
+    _write_levels_cache(cache)
+
+    # opcional: salvar no debug quantos faltam
+    try:
+        remaining = len([int(mid) for mid in member_ids if int(mid) not in cache])
+        _debug_set("levels_remaining", remaining)
+    except Exception:
+        pass
+
+    return cache, errors
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -1011,7 +1047,18 @@ def _collect_member_ids_from_agenda(agenda_items) -> set[int]:
                     pass
 
     return ids
-
+    
+def _merge_levels(api_levels: dict[int, dict], csv_levels: dict[int, dict]) -> dict[int, dict]:
+    out = dict(api_levels or {})
+    for mid, lv in (csv_levels or {}).items():
+        cur = out.get(mid) or {"ski": "", "snow": ""}
+        if not cur.get("ski") and lv.get("ski"):
+            cur["ski"] = lv["ski"]
+        if not cur.get("snow") and lv.get("snow"):
+            cur["snow"] = lv["snow"]
+        out[mid] = cur
+    return out
+    
 def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = None) -> str:
     today = date.today()
 
@@ -1043,10 +1090,11 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
     
     _debug_set("member_ids_t", member_ids_t)
     
-    levels_dict, level_errors = _load_levels_dict_from_api(member_ids_t)
-    _debug_set("level_errors", level_errors)
+    levels_api, level_errors = _load_levels_dict_from_api(member_ids_t, max_fetch_per_run=35)
+    levels_csv = _load_levels_dict_from_csv()
+    levels_dict = _merge_levels(levels_api, levels_csv)
     
-    # amostra rápida pra ver se está preenchendo
+    _debug_set("level_errors", level_errors)
     _debug_set("levels_sample", {mid: levels_dict.get(mid) for mid in list(member_ids_t)[:10]})
     
     rows = _materialize_rows(atividades, agenda_all, levels_dict)
@@ -1729,6 +1777,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
