@@ -5,12 +5,17 @@ Dashboard de Ocupação — Born to Ski (Streamlit Cloud-ready)
 - Botão "Atualizar agora" executa a coleta online (sem subprocess)
 - Filtros: Data, Modalidade, Período, Horário
 - Visuais Plotly + Calendário com números no quadrinho
+
+UPDATE (níveis):
+- Tenta puxar nível via EVO API v2 (member profile: /api/v2/members/{idMember})
+- Se falhar ou vier vazio, usa fallback CSV (GitHub raw/local)
 """
 
 import os
 import io
 import glob
 import calendar as pycal
+import re
 from datetime import datetime, date, timedelta
 
 import numpy as np
@@ -31,17 +36,15 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Credenciais (preferir st.secrets; fallback env; último recurso: vazias)
 EVO_USER = st.secrets.get("EVO_USER", os.environ.get("EVO_USER", ""))
 EVO_TOKEN = st.secrets.get("EVO_TOKEN", os.environ.get("EVO_TOKEN", ""))
-BASE_URL = "https://evo-integracao.w12app.com.br/api/v1"
-VERIFY_SSL = True
 
-# Defaults de período quando o usuário clicar em Atualizar (se não escolher outro)
+BASE_URL = "https://evo-integracao.w12app.com.br/api/v1"
+BASE_URL_V2 = "https://evo-integracao-api.w12app.com.br/api/v2"  # member profile v2
+
+VERIFY_SSL = True
 DAYS_AHEAD_DEFAULT = 21
 
 # ──────────────────────────────────────────────────────────────────────────────
-# NÍVEIS (DICIONÁRIO VIA CSV NO GITHUB)
-# - Enquanto a EVO não libera o endpoint oficial, carregamos um CSV público (raw do GitHub)
-# - O CSV deve ter pelo menos: idCliente ; niveis
-#   (niveis pode conter histórico separado por vírgula, ex: "1ASK,1CSK,2ASK,3ASB")
+# FALLBACK CSV (GitHub/raw ou local)
 # ──────────────────────────────────────────────────────────────────────────────
 LEVELS_CSV_URL = st.secrets.get("LEVELS_CSV_URL", os.environ.get("LEVELS_CSV_URL", ""))  # raw github (opcional)
 LEVELS_CSV_LOCAL = "data/clientes_niveis.csv"  # fallback local (opcional)
@@ -74,25 +77,73 @@ def _find_latest_slots_csv():
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
     return files[0] if files else None
 
-import re
+# ──────────────────────────────────────────────────────────────────────────────
+# AUTH + HTTP
+# ──────────────────────────────────────────────────────────────────────────────
+def _auth_headers():
+    if not EVO_USER or not EVO_TOKEN:
+        raise RuntimeError("Credenciais EVO ausentes. Defina EVO_USER e EVO_TOKEN em Secrets.")
+    import base64
+    auth_str = f"{EVO_USER}:{EVO_TOKEN}"
+    b64 = base64.b64encode(auth_str.encode()).decode()
+    return {
+        "Authorization": f"Basic {b64}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
+def _get_json(url, params=None, timeout=60):
+    r = requests.get(
+        url,
+        headers=_auth_headers(),
+        params=params or {},
+        verify=VERIFY_SSL,
+        timeout=timeout,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:300]}")
+    try:
+        return r.json()
+    except Exception as e:
+        raise RuntimeError(f"Falha ao interpretar JSON de {url}: {e}\nCorpo: {r.text[:500]}")
+
+def _to_list(maybe, key="data"):
+    if isinstance(maybe, list):
+        return maybe
+    if isinstance(maybe, dict):
+        if key in maybe and isinstance(maybe[key], list):
+            return maybe[key]
+        for v in maybe.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+def _first(obj, *keys, default=None):
+    for k in keys:
+        if isinstance(obj, dict) and k in obj and obj[k] not in (None, "", []):
+            return obj[k]
+    return default
+
+def _normalize_date_only(s):
+    if not s:
+        return s
+    if isinstance(s, str) and "T" in s:
+        return s.split("T", 1)[0]
+    return s
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NÍVEIS: API v2 + fallback CSV
+# ──────────────────────────────────────────────────────────────────────────────
 def _normalize_level_code(code: str) -> str:
     c = (code or "").strip().upper()
     if not c:
         return ""
-    # typos comuns (mantenha SKK! é válido)
     c = c.replace("SBB", "SB")
-    # remove caracteres estranhos
     c = re.sub(r"[^0-9A-Z]", "", c)
-
-    # normalização defensiva (opcional, mas ajuda se vier duplicado)
-    if c.endswith("SKKK"):
-        c = c[:-4] + "SKK"  # ex: 2ASKKK -> 2ASKK
-
     return c
 
 def _parse_levels_history(niveis_raw: str | None) -> dict:
-    """Retorna {"ski": "<ultimo SK/SKK/KC>", "snow": "<ultimo SB>"}."""
+    """Fallback CSV: histórico separado por vírgula/;|/ etc -> último SK* e último SB*."""
     out = {"ski": "", "snow": ""}
 
     if niveis_raw is None or (isinstance(niveis_raw, float) and pd.isna(niveis_raw)):
@@ -102,24 +153,22 @@ def _parse_levels_history(niveis_raw: str | None) -> dict:
     if not s:
         return out
 
-    # histórico separado por vírgulas (às vezes vem com ; | /)
     parts = [p.strip() for p in re.split(r"[,\|;/]+", s) if p.strip()]
     parts = [_normalize_level_code(p) for p in parts if p.strip()]
 
-    # pega o mais da direita
     for p in reversed(parts):
-        if not out["ski"] and (p.endswith("SK") or p.endswith("SKK") or p.endswith("KC")):
+        if not out["ski"] and (p.startswith("SK") or p.startswith("KC")):
             out["ski"] = p
-        if not out["snow"] and (p.endswith("SB") or p.endswith("SBK")):
+        if not out["snow"] and p.startswith("SB"):
             out["snow"] = p
         if out["ski"] and out["snow"]:
             break
 
     return out
-DEBUG_SCHEDULE_IDS = {15942757, 15848980}
+
 @st.cache_data(show_spinner=False, ttl=6 * 3600)
-def _load_levels_dict() -> dict[int, dict]:
-    """Carrega o dicionário {idCliente: {ski, snow}} a partir do CSV (GitHub raw ou arquivo local)."""
+def _load_levels_dict_from_csv() -> dict[int, dict]:
+    """Carrega {idCliente: {ski, snow}} do CSV (GitHub raw ou arquivo local)."""
     def _read_levels_csv(source: str) -> pd.DataFrame:
         attempts = [
             dict(sep=";", encoding="utf-8-sig"),
@@ -141,20 +190,14 @@ def _load_levels_dict() -> dict[int, dict]:
                 )
             except Exception as e:
                 last_err = e
-
-        raise RuntimeError(
-            "Falha ao ler o CSV de níveis. Verifique se a URL é RAW do GitHub e se o arquivo está bem formatado.\n"
-            f"Fonte: {source}\n"
-            f"Erro: {last_err}"
-        )
+        raise RuntimeError(f"Falha ao ler CSV de níveis. Fonte={source} | Erro={last_err}")
 
     if LEVELS_CSV_URL:
         df_lv = _read_levels_csv(LEVELS_CSV_URL)
+    elif os.path.exists(LEVELS_CSV_LOCAL):
+        df_lv = _read_levels_csv(LEVELS_CSV_LOCAL)
     else:
-        if os.path.exists(LEVELS_CSV_LOCAL):
-            df_lv = _read_levels_csv(LEVELS_CSV_LOCAL)
-        else:
-            return {}
+        return {}
 
     df_lv = df_lv.rename(columns={c: str(c).strip() for c in df_lv.columns})
 
@@ -171,10 +214,82 @@ def _load_levels_dict() -> dict[int, dict]:
             idc = int(str(row.get("idCliente", "")).strip())
         except Exception:
             continue
-        lv = _parse_levels_history(row.get(col_niveis))
-        out[idc] = lv
+        out[idc] = _parse_levels_history(row.get(col_niveis))
 
     return out
+
+@st.cache_data(show_spinner=False, ttl=12 * 3600)
+def _get_member_profile_v2(id_member: int) -> dict:
+    """
+    GET /api/v2/members/{idMember}
+    Retorna memberLevel: [{ levelGroupName, currentLevelName }, ...]
+    """
+    url = f"{BASE_URL_V2}/members/{int(id_member)}"
+    data = _get_json(url, timeout=30) or {}
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        return data["data"]
+    return data if isinstance(data, dict) else {}
+
+def _route_levels_to_ski_snow(member_profile: dict) -> dict:
+    """
+    Usa currentLevelName exatamente como vem (ex: SK1A, SB3B).
+    Só roteia Ski vs Snow com prefixo.
+    """
+    out = {"ski": "", "snow": ""}
+
+    ml = member_profile.get("memberLevel")
+    if not isinstance(ml, list):
+        return out
+
+    for it in ml:
+        if not isinstance(it, dict):
+            continue
+        lvl = str(it.get("currentLevelName") or "").strip().upper()
+        if not lvl:
+            continue
+
+        if lvl.startswith("SB"):
+            out["snow"] = lvl
+        elif lvl.startswith("SK") or lvl.startswith("KC"):
+            out["ski"] = lvl
+
+    return out
+
+@st.cache_data(show_spinner=False, ttl=12 * 3600)
+def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> dict[int, dict]:
+    """
+    Carrega {idMember: {"ski": "...", "snow": "..."} } chamando v2 /members/{idMember}.
+    Cache 12h.
+    """
+    out: dict[int, dict] = {}
+    for mid in member_ids:
+        try:
+            prof = _get_member_profile_v2(int(mid))
+            out[int(mid)] = _route_levels_to_ski_snow(prof)
+        except Exception:
+            out[int(mid)] = {"ski": "", "snow": ""}
+    return out
+
+def _load_levels_dict(member_ids: set[int] | None = None) -> dict[int, dict]:
+    """
+    Loader único:
+    - tenta API v2 (se tiver ids)
+    - fallback CSV se falhar ou vier vazio
+    """
+    if not member_ids:
+        return _load_levels_dict_from_csv()
+
+    try:
+        member_ids_t = tuple(sorted(member_ids))
+        lv = _load_levels_dict_from_api(member_ids_t)
+
+        # se API devolveu pelo menos algum nível preenchido, usa API
+        if lv and any((v.get("ski") or v.get("snow")) for v in lv.values()):
+            return lv
+
+        return _load_levels_dict_from_csv()
+    except Exception:
+        return _load_levels_dict_from_csv()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -293,51 +408,6 @@ def _load_data() -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 # COLETOR EVO (EMBUTIDO)
 # ──────────────────────────────────────────────────────────────────────────────
-def _auth_headers():
-    if not EVO_USER or not EVO_TOKEN:
-        raise RuntimeError("Credenciais EVO ausentes. Defina EVO_USER e EVO_TOKEN em Secrets.")
-    import base64
-    auth_str = f"{EVO_USER}:{EVO_TOKEN}"
-    b64 = base64.b64encode(auth_str.encode()).decode()
-    return {
-        "Authorization": f"Basic {b64}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-def _get_json(url, params=None):
-    r = requests.get(url, headers=_auth_headers(), params=params or {}, verify=VERIFY_SSL, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f"GET {url} -> {r.status_code} | {r.text[:300]}")
-    try:
-        return r.json()
-    except Exception as e:
-        raise RuntimeError(f"Falha ao interpretar JSON de {url}: {e}\nCorpo: {r.text[:500]}")
-
-def _to_list(maybe, key="data"):
-    if isinstance(maybe, list):
-        return maybe
-    if isinstance(maybe, dict):
-        if key in maybe and isinstance(maybe[key], list):
-            return maybe[key]
-        for v in maybe.values():
-            if isinstance(v, list):
-                return v
-    return []
-
-def _first(obj, *keys, default=None):
-    for k in keys:
-        if isinstance(obj, dict) and k in obj and obj[k] not in (None, "", []):
-            return obj[k]
-    return default
-
-def _normalize_date_only(s):
-    if not s:
-        return s
-    if isinstance(s, str) and "T" in s:
-        return s.split("T", 1)[0]
-    return s
-
 def _each_date_list(date_from_iso, date_to_iso):
     d0 = date.fromisoformat(date_from_iso)
     d1 = date.fromisoformat(date_to_iso)
@@ -404,14 +474,14 @@ def _safe_int(x):
     except Exception:
         return None
 
-_DETAIL_CACHE = {}
+_DETAIL_CACHE: dict[tuple, dict] = {}
 DEBUG_SCHEDULE_IDS = {15942757, 15848980}
 
 def _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, filled, expected, detail):
     if schedule_id not in DEBUG_SCHEDULE_IDS:
         return
 
-    print("\n" + "="*90)
+    print("\n" + "=" * 90)
     print(f"[DEBUG] ScheduleId={schedule_id} | date={date_val} | start={hour_start} | cap={capacity} | avail={available} | filled={filled} | expected={expected}")
 
     enrollments = detail.get("enrollments") if isinstance(detail, dict) else None
@@ -420,21 +490,24 @@ def _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, 
         return
 
     def b(v):
-        if isinstance(v, bool): return v
-        if v is None: return False
-        return str(v).strip().lower() in ("1","true","t","yes","y","sim")
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        return str(v).strip().lower() in ("1", "true", "t", "yes", "y", "sim")
 
     def si(v):
-        try: return int(v)
-        except: return None
+        try:
+            return int(v)
+        except Exception:
+            return None
 
     rows = []
     for i, e in enumerate(enrollments):
         if not isinstance(e, dict):
             continue
-        # tenta achar nome do jeito mais permissivo possível só pro debug
         nm = None
-        for k in ["name","fullName","displayName","customerName","personName","clientName","description","memberName","nome"]:
+        for k in ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description", "memberName", "nome"]:
             if e.get(k):
                 nm = str(e.get(k)).strip()
                 break
@@ -451,19 +524,16 @@ def _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, 
             "justifiedAbsence": b(e.get("justifiedAbsence")),
         })
 
-    # imprime todos
     print("[DEBUG] ENROLLMENTS (raw):")
     for r in rows:
         print("  ", r)
 
-    # diagnósticos focados no Buraco #1
     slot_ints = [r["slotNumber_int"] for r in rows if r["name"]]
     print("[DEBUG] slotNumber_int list:", slot_ints)
 
-    # conta duplicados ignorando None
     from collections import Counter
     c = Counter([x for x in slot_ints if x is not None])
-    dups = {k:v for k,v in c.items() if v > 1}
+    dups = {k: v for k, v in c.items() if v > 1}
     print("[DEBUG] slotNumber duplicados (k:count):", dups)
 
     zeros = [r for r in rows if r["slotNumber_int"] == 0]
@@ -474,7 +544,7 @@ def _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, 
     if nones:
         print("[DEBUG] slotNumber==None aparece em:", [n["name"] for n in nones])
 
-    print("="*90)
+    print("=" * 90)
 
 def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, id_activity_session: int | None = None):
     if not config_id and not id_activity_session:
@@ -485,7 +555,7 @@ def _get_schedule_detail(config_id: int | None, activity_date_iso: str | None, i
     params = {}
     if config_id and activity_date_iso:
         params["idConfiguration"] = int(config_id)
-        params["activityDate"] = activity_date_iso  # "YYYY-MM-DD"
+        params["activityDate"] = activity_date_iso
     if id_activity_session:
         params["idActivitySession"] = int(id_activity_session)
     try:
@@ -507,7 +577,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
     if not isinstance(detail, dict):
         return []
 
-    # Normaliza slot_date -> date
     sd: date | None = None
     if slot_date:
         try:
@@ -518,8 +587,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
         except Exception:
             sd = None
 
-    # Considera "futuro operacional" = amanhã ou depois
-    # (você comentou que gera a grade pro dia seguinte)
     is_future_op = False
     if sd is not None:
         is_future_op = sd >= (date.today() + timedelta(days=1))
@@ -554,15 +621,14 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
                     return str(e.get(k)).strip()
             return None
 
-        by_slot = {}  # slotNumber -> melhor enrollment
-        extras = []   # sem slotNumber (ou slotNumber inválido)
+        by_slot = {}
+        extras = []
 
         def _score(r):
-            # maior é melhor
             return (
-                1 if r.get("_replacement") else 0,   # substituto ganha
-                1 if r.get("_status") == 0 else 0,   # presente ganha (se existir)
-                0 if r.get("_justAbs") else 1,       # NÃO justificada ganha (1), justificada perde (0)
+                1 if r.get("_replacement") else 0,
+                1 if r.get("_status") == 0 else 0,
+                0 if r.get("_justAbs") else 1,
             )
 
         for e in enrollments:
@@ -577,12 +643,11 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             suspended = _to_bool(e.get("suspended"))
             replacement = _to_bool(e.get("replacement"))
             justified_abs = _to_bool(e.get("justifiedAbsence"))
-            status = _safe_int_local(e.get("status"))  # pode ser None
+            status = _safe_int_local(e.get("status"))
 
             if removed or suspended:
                 continue
 
-            # PASSADO: filtra presença
             if not is_future_op:
                 if status is not None and status != 0:
                     continue
@@ -600,7 +665,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
                 "_justAbs": justified_abs,
             }
 
-            # slot_num inválido (muito comum vir 0) → não dedupa, manda pra extras
             if slot_num is None or slot_num == 0:
                 extras.append(rec)
                 continue
@@ -609,7 +673,6 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
             if prev is None:
                 by_slot[slot_num] = rec
             else:
-                # escolhe o melhor; não perde o outro
                 if _score(rec) > _score(prev):
                     by_slot[slot_num] = rec
                     extras.append(prev)
@@ -619,18 +682,16 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
         slotted = [by_slot[k] for k in sorted(by_slot.keys())]
         out = slotted + extras
 
-        # Ordena ANTES de limpar os campos internos
         out.sort(
             key=lambda r: (
                 -(1 if r.get("_replacement") else 0),
                 -(1 if r.get("_status") == 0 else 0),
-                (1 if r.get("_justAbs") else 0),  # justAbs=True vai pro fim
+                (1 if r.get("_justAbs") else 0),
                 (r.get("_slotNumber") is None, r.get("_slotNumber") or 9999),
                 r.get("name") or "",
             )
         )
 
-        # limpa campos internos depois do sort
         for r in out:
             r.pop("_slotNumber", None)
             r.pop("_replacement", None)
@@ -639,10 +700,9 @@ def _extract_alunos(detail: dict, target_start: str | None = None, slot_date: st
 
         return out
 
-
-    # Fallback antigo (caso sua unidade não retorne enrollments)
+    # fallback antigo
     name_keys = ["name", "fullName", "displayName", "customerName", "personName", "clientName", "description"]
-    id_keys   = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
+    id_keys = ["idMember", "idClient", "idCliente", "idCustomer", "clientId", "customerId", "memberId"]
     list_keys = ["registrations", "enrollments", "students", "members", "customers", "clients", "participants", "users"]
 
     def _name(o):
@@ -780,24 +840,22 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
     act_names = {a["name"].strip().lower(): a for a in atividades if a["name"]}
 
     for h in agenda_items:
-        # ── Atividade/IDs básicos
         act_name_item = _first(h, "name", "activityDescription", "activityName", "description")
         if act_name_item:
             act_key = act_name_item.strip().lower()
             act_resolved = act_names.get(act_key)
             act_name_final = act_resolved["name"] if act_resolved else act_name_item
-            act_id_final   = act_resolved["id"]   if act_resolved else _first(h, "idActivity", "activityId", "id", "Id")
+            act_id_final = act_resolved["id"] if act_resolved else _first(h, "idActivity", "activityId", "id", "Id")
         else:
             act_name_final = "(Sem atividade)"
-            act_id_final   = _first(h, "idActivity", "activityId", "id", "Id")
+            act_id_final = _first(h, "idActivity", "activityId", "id", "Id")
 
-        # ── Data e horários
-        date_val   = _first(h, "_requestedDate") or _normalize_date_only(
-                        _first(h, "activityDate", "date", "classDate", "day", "scheduleDate"))
+        date_val = _first(h, "_requestedDate") or _normalize_date_only(
+            _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
+        )
         hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
-        hour_end   = _first(h, "endTime",   "hourEnd",   "timeEnd",   "endHour")
+        hour_end = _first(h, "endTime", "hourEnd", "timeEnd", "endHour")
 
-        # ── IDs para o /detail
         config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
         id_activity_session = _first(
             h,
@@ -805,10 +863,8 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
         )
 
-        # ── Detail (uma vez só)
         detail = _get_schedule_detail(config_id, date_val, id_activity_session)
 
-        # ── Professor
         prof_name = _extract_professor(h)
         if not prof_name:
             prof_name = _first(detail, "instructor", "teacher", "instructorName", "teacherName")
@@ -823,10 +879,8 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                         break
         prof_name = (prof_name or "(Sem professor)")
 
-        # ── Pista (A/B) via detail
         pista = _extract_pista(detail) or "(Sem pista)"
 
-        # ── schedule_id (para CSV e debug)
         schedule_id = _first(
             h,
             "idAtividadeSessao", "idConfiguration", "idGroupActivity",
@@ -836,39 +890,29 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             "idClass", "idTime", "id", "Id"
         )
 
-        # ── Capacidade/ocupação
-        capacity  = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
-        filled    = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
+        capacity = _safe_int(_first(h, "capacity", "spots", "vacanciesTotal", "maxStudents", "maxCapacity"))
+        filled = _safe_int(_first(h, "ocupation", "spotsFilled", "occupied", "enrolled", "registrations"))
         available = _safe_int(_first(h, "available", "vacancies"))
         if available is None and capacity is not None and filled is not None:
             available = max(0, capacity - filled)
 
-        # ─────────────────────────────────────────────────────────────
-        # 1) calcula expected ANTES de extrair alunos
         filled_calc = ((capacity or 0) - (available or 0)) if filled is None else filled
         filled_calc = max(0, filled_calc)
-        expected    = min(filled_calc, (capacity or 0))
+        expected = min(filled_calc, (capacity or 0))
 
-        # 2) DEBUG: imprime o contexto + enrollments RAW do detail
         if schedule_id in DEBUG_SCHEDULE_IDS:
             _dbg_print_schedule(schedule_id, date_val, hour_start, capacity, available, filled, expected, detail)
-        # ─────────────────────────────────────────────────────────────
 
-        # 3) extrai alunos (slot_date=date_val para aplicar sua regra de "amanhã+")
         alunos = _extract_alunos(detail, target_start=(hour_start or None), slot_date=date_val) or []
 
-        # 4) DEBUG: imprime alunos antes do corte
         if schedule_id in DEBUG_SCHEDULE_IDS:
             print("[DEBUG] alunos_extraidos (antes do corte):", [a.get("name") for a in alunos])
 
-        # 5) aplica corte pelo expected
         alunos = alunos[:expected]
 
-        # 6) DEBUG: imprime alunos depois do corte
         if schedule_id in DEBUG_SCHEDULE_IDS:
             print("[DEBUG] alunos_final (depois do corte expected):", [a.get("name") for a in alunos])
 
-        # ── Monta Aluno 1..3 + Níveis
         aluno_cols = ["vazio", "vazio", "vazio"]
         nivel_ski_cols = ["", "", ""]
         nivel_snow_cols = ["", "", ""]
@@ -891,14 +935,13 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             nivel_ski_cols[2] = ""
             nivel_snow_cols[2] = ""
 
-        # ── Linha
         if date_val:
             rows.append({
                 "Data": date_val,
                 "Atividade": act_name_final,
                 "Pista": pista,
                 "Início": hour_start,
-                "Fim":   hour_end,
+                "Fim": hour_end,
                 "Horario": hour_start if hour_start else None,
                 "Capacidade": capacity or 0,
                 "Disponíveis": (available or 0),
@@ -909,15 +952,14 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
                 "Aluno 1": aluno_cols[0],
                 "Aluno 2": aluno_cols[1],
                 "Aluno 3": aluno_cols[2],
-                "Aluno 1 - Nível Ski":  nivel_ski_cols[0],
+                "Aluno 1 - Nível Ski": nivel_ski_cols[0],
                 "Aluno 1 - Nível Snow": nivel_snow_cols[0],
-                "Aluno 2 - Nível Ski":  nivel_ski_cols[1],
+                "Aluno 2 - Nível Ski": nivel_ski_cols[1],
                 "Aluno 2 - Nível Snow": nivel_snow_cols[1],
-                "Aluno 3 - Nível Ski":  nivel_ski_cols[2],
+                "Aluno 3 - Nível Ski": nivel_ski_cols[2],
                 "Aluno 3 - Nível Snow": nivel_snow_cols[2],
             })
 
-    # ── Ordena e aplica fallback A/B para pistas “(Sem pista)”
     rows.sort(key=lambda r: (r["Data"], r.get("Horario") or "", r["Atividade"]))
     alt_idx_by_date = {}
     for r in rows:
@@ -928,6 +970,39 @@ def _materialize_rows(atividades, agenda_items, levels_dict):
             alt_idx_by_date[d] = i + 1
 
     return rows
+
+def _collect_member_ids_from_agenda(agenda_items) -> set[int]:
+    """
+    Passa pelos slots, pega detail, extrai alunos e junta ids únicos (idMember/idClient etc).
+    Reaproveita _DETAIL_CACHE.
+    """
+    ids: set[int] = set()
+
+    for h in agenda_items:
+        date_val = _first(h, "_requestedDate") or _normalize_date_only(
+            _first(h, "activityDate", "date", "classDate", "day", "scheduleDate")
+        )
+        hour_start = _first(h, "startTime", "hourStart", "timeStart", "startHour")
+
+        config_id = _first(h, "idConfiguration", "idActivitySchedule", "idGroupActivity", "idConfig", "configurationId")
+        id_activity_session = _first(
+            h,
+            "idActivitySession", "idActivityScheduleClass", "idClassSchedule",
+            "idScheduleClass", "idScheduleTime", "idTime", "idClass", "idSchedule"
+        )
+
+        detail = _get_schedule_detail(config_id, date_val, id_activity_session)
+        alunos = _extract_alunos(detail, target_start=(hour_start or None), slot_date=date_val) or []
+
+        for a in alunos:
+            v = a.get("idCliente")
+            if v:
+                try:
+                    ids.add(int(v))
+                except Exception:
+                    pass
+
+    return ids
 
 def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = None) -> str:
     today = date.today()
@@ -954,7 +1029,13 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
 
     atividades = _listar_atividades()
     agenda_all = _fetch_agenda_periodo(df_iso_from, df_iso_to)
-    levels_dict = _load_levels_dict()
+
+    # 1) coleta ids (usa o cache do /detail)
+    member_ids = _collect_member_ids_from_agenda(agenda_all)
+
+    # 2) níveis: tenta API v2 -> fallback CSV
+    levels_dict = _load_levels_dict(member_ids)
+
     rows = _materialize_rows(atividades, agenda_all, levels_dict)
     if not rows:
         raise RuntimeError("Nenhum slot retornado pela API no período solicitado.")
@@ -1040,7 +1121,6 @@ def make_calendar_figure(
             z_val = slots
 
         z[wi][wd] = float(z_val)
-
         custom[wi][wd] = {
             "data": r["Data"],
             "slots": slots,
@@ -1608,6 +1688,8 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
+
 
 
 
