@@ -26,6 +26,16 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
+def _debug_set(key: str, value):
+    st.session_state.setdefault("_debug", {})
+    st.session_state["_debug"][key] = value
+
+def _debug_get(key: str, default=None):
+    return st.session_state.get("_debug", {}).get(key, default)
+
+def _debug_clear():
+    st.session_state["_debug"] = {}
+    
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIG GERAL
 # ──────────────────────────────────────────────────────────────────────────────
@@ -275,21 +285,20 @@ def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, d
     """
     Retorna:
       - levels_dict: {idMember: {"ski": "...", "snow": "..."}}
-      - errors: {idMember: "status/erro..."} só quando falhar
+      - errors: {idMember: "erro/status"} quando falhar
     """
-    levels: dict[int, dict] = {}
+    out: dict[int, dict] = {}
     errors: dict[int, str] = {}
 
     for mid in member_ids:
         try:
             prof = _get_member_profile_v2(int(mid))
-            levels[int(mid)] = _route_levels_to_ski_snow(prof)
+            out[int(mid)] = _route_levels_to_ski_snow(prof)
         except Exception as e:
-            levels[int(mid)] = {"ski": "", "snow": ""}
+            out[int(mid)] = {"ski": "", "snow": ""}
             errors[int(mid)] = str(e)
 
-    return levels, errors
-
+    return out, errors
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -1030,13 +1039,17 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
     atividades = _listar_atividades()
     agenda_all = _fetch_agenda_periodo(df_iso_from, df_iso_to)
 
-    # 1) coleta ids (usa o cache do /detail)
     member_ids = _collect_member_ids_from_agenda(agenda_all)
-
-    # 2) níveis: tenta API v2 -> fallback CSV
+    member_ids_t = tuple(sorted(member_ids))
+    
+    _debug_set("member_ids_t", member_ids_t)
+    
     levels_dict, level_errors = _load_levels_dict_from_api(member_ids_t)
-
-
+    _debug_set("level_errors", level_errors)
+    
+    # amostra rápida pra ver se está preenchendo
+    _debug_set("levels_sample", {mid: levels_dict.get(mid) for mid in list(member_ids_t)[:10]})
+    
     rows = _materialize_rows(atividades, agenda_all, levels_dict)
     if not rows:
         raise RuntimeError("Nenhum slot retornado pela API no período solicitado.")
@@ -1335,17 +1348,24 @@ with col_up_a:
             with st.expander("Detalhes"):
                 st.code(str(e))
 with st.expander("🛠️ Debug níveis (API v2)"):
-    st.write("Qtd IDs únicos encontrados na agenda:", len(member_ids_t))
-    st.write("Amostra de IDs:", list(member_ids_t[:10]))
+    member_ids_t = _debug_get("member_ids_t", ())
+    level_errors = _debug_get("level_errors", {})
+    levels_sample = _debug_get("levels_sample", {})
 
-    # Mostra erros (se existirem)
-    if 'level_errors' in locals() and level_errors:
+    st.write("Qtd IDs únicos encontrados na agenda:", len(member_ids_t))
+    st.write("Amostra de IDs:", list(member_ids_t[:10]) if member_ids_t else [])
+
+    if level_errors:
         st.error(f"{len(level_errors)} chamadas falharam. Exibindo até 5:")
         for mid, err in list(level_errors.items())[:5]:
             st.code(f"idMember={mid} -> {err}")
 
-    # Teste manual de 1 ID escolhido
-    test_id = st.number_input("Testar idMember", min_value=0, value=int(member_ids_t[0]) if member_ids_t else 0, step=1)
+    if levels_sample:
+        st.write("Amostra do resultado (levels_dict):")
+        st.json(levels_sample)
+
+    test_id_default = int(member_ids_t[0]) if member_ids_t else 0
+    test_id = st.number_input("Testar idMember", min_value=0, value=test_id_default, step=1)
     if st.button("Testar chamada v2 agora"):
         try:
             prof = _get_member_profile_v2(int(test_id))
@@ -1710,6 +1730,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
