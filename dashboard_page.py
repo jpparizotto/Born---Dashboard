@@ -270,26 +270,26 @@ def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> dict[int, dict]:
             out[int(mid)] = {"ski": "", "snow": ""}
     return out
 
-def _load_levels_dict(member_ids: set[int] | None = None) -> dict[int, dict]:
+@st.cache_data(show_spinner=False, ttl=12 * 3600)
+def _load_levels_dict_from_api(member_ids: tuple[int, ...]) -> tuple[dict[int, dict], dict[int, str]]:
     """
-    Loader único:
-    - tenta API v2 (se tiver ids)
-    - fallback CSV se falhar ou vier vazio
+    Retorna:
+      - levels_dict: {idMember: {"ski": "...", "snow": "..."}}
+      - errors: {idMember: "status/erro..."} só quando falhar
     """
-    if not member_ids:
-        return _load_levels_dict_from_csv()
+    levels: dict[int, dict] = {}
+    errors: dict[int, str] = {}
 
-    try:
-        member_ids_t = tuple(sorted(member_ids))
-        lv = _load_levels_dict_from_api(member_ids_t)
+    for mid in member_ids:
+        try:
+            prof = _get_member_profile_v2(int(mid))
+            levels[int(mid)] = _route_levels_to_ski_snow(prof)
+        except Exception as e:
+            levels[int(mid)] = {"ski": "", "snow": ""}
+            errors[int(mid)] = str(e)
 
-        # se API devolveu pelo menos algum nível preenchido, usa API
-        if lv and any((v.get("ski") or v.get("snow")) for v in lv.values()):
-            return lv
+    return levels, errors
 
-        return _load_levels_dict_from_csv()
-    except Exception:
-        return _load_levels_dict_from_csv()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # NORMALIZAÇÃO DE DADOS
@@ -1034,7 +1034,8 @@ def gerar_csv(date_from: str | date | None = None, date_to: str | date | None = 
     member_ids = _collect_member_ids_from_agenda(agenda_all)
 
     # 2) níveis: tenta API v2 -> fallback CSV
-    levels_dict = _load_levels_dict(member_ids)
+    levels_dict, level_errors = _load_levels_dict_from_api(member_ids_t)
+
 
     rows = _materialize_rows(atividades, agenda_all, levels_dict)
     if not rows:
@@ -1308,7 +1309,7 @@ st.subheader("Atualização dos dados")
 col_up_a, col_up_b = st.columns([1, 2])
 with col_up_a:
     btn = st.button("🔄 Atualizar agora", type="primary")
-
+    
     if btn:
         try:
             with st.spinner("Coletando dados do EVO e gerando CSV..."):
@@ -1333,6 +1334,27 @@ with col_up_a:
             st.error("Falha ao atualizar os dados.")
             with st.expander("Detalhes"):
                 st.code(str(e))
+with st.expander("🛠️ Debug níveis (API v2)"):
+    st.write("Qtd IDs únicos encontrados na agenda:", len(member_ids_t))
+    st.write("Amostra de IDs:", list(member_ids_t[:10]))
+
+    # Mostra erros (se existirem)
+    if 'level_errors' in locals() and level_errors:
+        st.error(f"{len(level_errors)} chamadas falharam. Exibindo até 5:")
+        for mid, err in list(level_errors.items())[:5]:
+            st.code(f"idMember={mid} -> {err}")
+
+    # Teste manual de 1 ID escolhido
+    test_id = st.number_input("Testar idMember", min_value=0, value=int(member_ids_t[0]) if member_ids_t else 0, step=1)
+    if st.button("Testar chamada v2 agora"):
+        try:
+            prof = _get_member_profile_v2(int(test_id))
+            st.json({
+                "idMember": prof.get("idMember"),
+                "memberLevel": prof.get("memberLevel"),
+            })
+        except Exception as e:
+            st.error(str(e))
 
 with col_up_b:
     st.caption("O botão gera um novo CSV no servidor (pasta `evo_ocupacao/`) e recarrega o painel.")
@@ -1688,6 +1710,7 @@ st.download_button(
 )
 
 st.caption("Feito com ❤️ em Streamlit + Plotly — coleta online via EVO")
+
 
 
 
