@@ -98,6 +98,7 @@ def pie_acidentes(df_in: pd.DataFrame, col: str, title: str):
     - % e número absoluto dentro de cada fatia
     - ordem decrescente por quantidade
     """
+
     if df_in.empty or col not in df_in.columns:
         st.info("Sem dados para exibir.")
         return
@@ -114,22 +115,35 @@ def pie_acidentes(df_in: pd.DataFrame, col: str, title: str):
         .sort_values("qtd", ascending=False)
     )
 
+    # mapa de cores para gravidade
+    mapa_cores = {
+        "Grave": "red",
+        "Leve": "lightblue",
+        "Moderada": "darkblue",
+        "Médio": "darkblue"
+    }
+
     fig = px.pie(
         g,
         names=col,
         values="qtd",
         title=title,
-        hole=0,  # 0 = pizza “cheia”; se quiser donut, troque para 0.4 por exemplo
+        hole=0,  # 0 = pizza cheia
+        color=col,
+        color_discrete_map=mapa_cores
     )
+
     # mostra percent + absoluto dentro da fatia
     fig.update_traces(
         textposition="inside",
         textinfo="percent+value",
     )
+
     fig.update_layout(
         legend_title_text=col.replace("_", " ").title(),
         margin=dict(l=10, r=10, t=50, b=10),
     )
+
     st.plotly_chart(fig, use_container_width=True)
 
 
