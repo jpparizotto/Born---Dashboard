@@ -1794,7 +1794,8 @@ with col_c:
         df_excel.to_excel(writer, index=False, sheet_name="Aulas")
         worksheet = writer.sheets["Aulas"]
         for i, col in enumerate(df_excel.columns):
-            max_len = max(df_excel[col].astype(str).map(len).max(), len(col)) + 2
+            col_max = df_excel[col].astype(str).str.len().max()
+            max_len = max(col_max if pd.notna(col_max) else 0, len(col)) + 2
             worksheet.set_column(i, i, min(max_len, 40))
 
     st.download_button(
@@ -1822,7 +1823,8 @@ with col_d:
             df_semana.to_excel(writer, index=False, sheet_name="Semana")
             ws = writer.sheets["Semana"]
             for i, col in enumerate(df_semana.columns):
-                max_len = max(df_semana[col].astype(str).map(len).max(), len(col)) + 2
+                col_max = df_semana[col].astype(str).str.len().max()
+                max_len = max(col_max if pd.notna(col_max) else 0, len(col)) + 2
                 ws.set_column(i, i, min(max_len, 40))
 
         df_fim = grp_break[grp_break["TipoDia"] == "Fim de semana"].copy()
@@ -1840,7 +1842,8 @@ with col_d:
             df_fim.to_excel(writer, index=False, sheet_name="FimSemana")
             ws = writer.sheets["FimSemana"]
             for i, col in enumerate(df_fim.columns):
-                max_len = max(df_fim[col].astype(str).map(len).max(), len(col)) + 2
+                col_max = df_fim[col].astype(str).str.len().max()
+                max_len = max(col_max if pd.notna(col_max) else 0, len(col)) + 2
                 ws.set_column(i, i, min(max_len, 40))
 
     buffer_break.seek(0)
@@ -1864,7 +1867,8 @@ with pd.ExcelWriter(buffer_prof, engine="xlsxwriter") as writer:
     df_prof_escala.to_excel(writer, index=False, sheet_name="Escala")
     worksheet = writer.sheets["Escala"]
     for i, col in enumerate(df_prof_escala.columns):
-        max_len = max(df_prof_escala[col].astype(str).map(len).max(), len(col)) + 2
+        col_max = df_prof_escala[col].astype(str).str.len().max()
+        max_len = max(col_max if pd.notna(col_max) else 0, len(col)) + 2
         worksheet.set_column(i, i, min(max_len, 40))
 buffer_prof.seek(0)
 
