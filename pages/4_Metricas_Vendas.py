@@ -208,7 +208,10 @@ sel_produtos = st.sidebar.multiselect(
 )
 # filtro por colaborador (se a coluna existir)
 if col_colab:
-    colaboradores_unicos = sorted(df_base[col_colab].astype(str).unique())
+    colaboradores_unicos = sorted(                                                                                                                                                                               
+        df_base[col_colab].dropna().astype(str).unique().tolist(),
+        key=str,                                                                                                                                                                                                 
+    )
     sel_colaboradores = st.sidebar.multiselect(
         "Colaboradores (responsável pela venda)",
         options=colaboradores_unicos,
